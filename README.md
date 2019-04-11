@@ -1,2 +1,2 @@
 # dbpulse
-command line tool to monitor database  performance 
+command line tool to monitor database performance

@@ -1,0 +1,14 @@
+[package]
+name = "dbpulse"
+version = "0.1.0"
+authors = ["Nicolas Embriz <nbari@tequila.io>"]
+description = "command line tool to monitor database performance"
+documentation = "https://github.com/nbari/dbpulse/blob/master/README.md"
+homepage = "https://github.com/nbari/dbpulse"
+repository = "https://github.com/nbari/dbpulse"
+readme = "README.md"
+keywords = ["mysql", "monitor", "healthcheck", "database", "pulse"]
+categories = ["command-line-utilities", "command-line-interface"]
+license-file = "LICENSE"
+
+[dependencies]
