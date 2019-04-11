@@ -1,3 +1,8 @@
+use std::{thread, time};
+
 fn main() {
-    println!("Hello, world!");
+    loop {
+        println!("Loop forever!");
+        thread::sleep(time::Duration::new(2, 0));
+    }
 }
