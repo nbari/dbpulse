@@ -12,4 +12,7 @@ categories = ["command-line-utilities", "command-line-interface"]
 license-file = "LICENSE"
 
 [dependencies]
+clap = "~2.33"
 mysql = "*"
+slack-hook = "0.7"
+tokio = "0.1"
