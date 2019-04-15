@@ -9,7 +9,9 @@ pub fn send_msg() {
         println!("could not find {}: {}", "SLACK_WEBHOOK_URL", e);
         process::exit(1);
     });
+
     let slack = Slack::new(&*slack_url).unwrap();
+
     let p = PayloadBuilder::new()
         .text("test message")
         .channel("#noisy-neighbours")
@@ -17,7 +19,9 @@ pub fn send_msg() {
         .icon_emoji(":warning:")
         .build()
         .unwrap();
+
     let res = slack.send(&p);
+
     match res {
         Ok(()) => println!("ok"),
         Err(x) => println!("ERR: {:?}",x)
