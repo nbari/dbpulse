@@ -1,16 +1,22 @@
-extern crate dbpulse;
 extern crate tokio;
+extern crate futures;
 
-use dbpulse::slack;
-use std::time::{Duration, Instant};
+use std::{thread, time};
 use tokio::prelude::*;
 use tokio::timer::Interval;
+use futures::future::lazy;
 
 fn main() {
-    let task = Interval::new(Instant::now(), Duration::new(3, 0))
-        .for_each(|instant| {
-            println!("fire; instant={:?}", instant);
-            slack::send_msg();
+    let task = Interval::new(time::Instant::now(), time::Duration::new(1, 0))
+        .for_each(|interval| {
+            println!("Interval: {:?}", interval);
+            for i in 0..5 {
+                tokio::spawn(lazy(move || {
+                    println!("Hello from task {}", i);
+                     thread::sleep(time::Duration::from_secs(3));
+                    Ok(())
+                }));
+            }
             Ok(())
         })
     .map_err(|e| panic!("interval errored; err={:?}", e));
