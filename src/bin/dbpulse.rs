@@ -13,6 +13,7 @@ fn main() {
             for i in 0..5 {
                 tokio::spawn(lazy(move || {
                     println!("Hello from task {}", i);
+                    // mock delay
                     thread::sleep(time::Duration::from_secs(3));
                     Ok(())
                 }));
