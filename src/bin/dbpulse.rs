@@ -1,46 +1,54 @@
-extern crate tokio;
 extern crate futures;
+extern crate tokio;
 
-use futures::future::{self, Loop}; // 0.1.26
-use std::time::{Duration, Instant};
-use tokio::{prelude::*, timer::Delay};  // 0.1.18
+use futures::future::lazy;
+use std::time::{self, Duration, Instant};
+
+use tokio::prelude::*;
+use tokio::timer::{Delay, Interval};
+
+use futures::future::join_all;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 fn main() {
-    let repeat_count = Some(5);
+    let locker = Arc::new(AtomicBool::new(false));
 
-    let forever = future::loop_fn(repeat_count, |repeat_count| {
-        eprintln!("Loop starting at {:?}", Instant::now());
+    let task = Interval::new(time::Instant::now(), time::Duration::new(1, 0))
+        .map_err(|e| panic!("interval errored; err={:?}", e))
+        .for_each(move |interval| {
+            let is_locked = locker.load(Ordering::SeqCst);
+            println!("Interval: {:?} --- {:?}", interval, is_locked);
 
-        // Resolves when all pages are done
-        let batch_of_pages = future::join_all(all_pages());
+            if !is_locked {
+                locker.store(true, Ordering::SeqCst);
+                println!("locked");
 
-        // Resolves when both all pages and a delay of 1 second is done
-        let wait = Future::join(batch_of_pages, ez_delay_ms(1000));
+                let futures: Vec<_> = (0..1)
+                    .map(|i| {
+                        lazy(move || {
+                            println!("Running Task-{} in  Thread {:?}", i, std::thread::current().id());
+                            // mock delay
+                            Ok(())
+                        })
+                        .and_then(move |_| {
+                            println!("Task-{} is done in  Thread {:?}", i, std::thread::current().id());
+                            Ok(())
+                        })
+                    })
+                .collect();
 
-        // Run all this again
-        wait.map(move |_| {
-            if let Some(0) = repeat_count {
-                Loop::Break(())
-            } else {
-                Loop::Continue(repeat_count.map(|c| c - 1))
+                let unlocker = locker.clone();
+                tokio::spawn(join_all(futures).and_then(move |_| {
+                    unlocker.store(false, Ordering::SeqCst);
+                    println!("unlocked\n\n");
+
+                    Ok(())
+                }));
             }
-        })
-    });
 
-    tokio::run(forever.map_err(drop));
-}
+            Ok(())
+        });
 
-fn all_pages() -> Vec<Box<dyn Future<Item = (), Error = ()> + Send + 'static>> {
-    vec![Box::new(page("a", 1000)), Box::new(page("b", 2000)), Box::new(page("c", 3000))]
-}
-
-fn page(name: &'static str, time_ms: u64) -> impl Future<Item = (), Error = ()> + Send + 'static {
-    future::ok(())
-        .inspect(move |_| eprintln!("page {} starting", name))
-        .and_then(move |_| ez_delay_ms(time_ms))
-        .inspect(move |_| eprintln!("page {} done", name))
-}
-
-fn ez_delay_ms(ms: u64) -> impl Future<Item = (), Error = ()> + Send + 'static {
-    Delay::new(Instant::now() + Duration::from_millis(ms)).map_err(drop)
+    tokio::run(task.then(|_| Ok(())));
 }
