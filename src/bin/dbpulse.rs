@@ -1,19 +1,16 @@
 extern crate dbpulse;
-extern crate rand;
 
-use dbpulse::slack;
+//use dbpulse::slack;
 use std::{
     thread,
     time::{Duration, Instant},
     process::Command,
 };
 
-use rand::Rng;
-
 
 fn main() {
     loop {
-        let wait_time = Duration::from_secs(10);
+        let wait_time = Duration::from_secs(30);
         let start = Instant::now();
         println!("Scheduler starting at {:?}", start);
 
@@ -27,7 +24,7 @@ fn main() {
             );
             thread::sleep(remaining);
         }
-        slack::send_msg();
+        //        slack::send_msg();
     }
 }
 
@@ -53,7 +50,5 @@ fn scheduler() {
 }
 
 fn mock_delay() {
-    let num = rand::thread_rng().gen_range(1, 5);
-    println!("sleeping for {}", num);
-    Command::new("sleep").arg(format!("{}", num)).output().expect("failed to execute process");
+    Command::new("sleep").arg("3").output().expect("failed to execute process");
 }
