@@ -1,18 +1,16 @@
-use chrono::Local;
 use slack_hook::{Slack, PayloadBuilder};
 use std::{env,process};
 
-pub fn send_msg() {
+pub fn send_msg(msg: String) {
     let slack_url = env::var("SLACK_WEBHOOK_URL").unwrap_or_else(|e| {
         println!("could not find {}: {}", "SLACK_WEBHOOK_URL", e);
         process::exit(1);
     });
 
     let slack = Slack::new(&*slack_url).unwrap();
-    let date = Local::now();
 
     let p = PayloadBuilder::new()
-        .text(format!("test message, now: {}",  date.format("%Y-%m-%d %H:%M:%S")))
+        .text(msg)
         .channel("#noisy-neighbours")
         .username("dbpulse")
         .icon_emoji(":warning:")
@@ -22,7 +20,7 @@ pub fn send_msg() {
     let res = slack.send(&p);
 
     match res {
-        Ok(()) => println!("ok"),
+        Ok(()) => println!("msg sent"),
         Err(x) => println!("ERR: {:?}",x)
     }
 }
