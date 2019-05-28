@@ -1,9 +1,7 @@
 FROM clux/muslrust
 RUN mkdir /source
 WORKDIR /source
-COPY Cargo.toml .
-COPY Cargo.lock .
-COPY ./src/ ./src/
+COPY . .
 RUN cargo build --release
 RUN strip ./target/x86_64-unknown-linux-musl/release/dbpulse
 
