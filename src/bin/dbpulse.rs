@@ -3,12 +3,18 @@ extern crate mysql;
 
 use dbpulse::slack;
 use std::{
+    env,
+    process,
     thread,
     time::{Duration, Instant},
 };
 
 fn main() {
-    let pool = mysql::Pool::new_manual(3,10, "mysql://root:test@localhost:3306/").expect("Could not connect to MySQL");
+    let dsn= env::var("DSN").unwrap_or_else(|e| {
+        println!("could not find DSN: {}", e);
+        process::exit(1);
+    });
+    let pool = mysql::Pool::new_manual(3,10, dsn).expect("Could not connect to MySQL");
 
     loop {
         let wait_time = Duration::from_secs(30);
