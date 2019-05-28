@@ -13,5 +13,7 @@ license-file = "LICENSE"
 edition = "2018"
 
 [dependencies]
-mysql = "16.0.2"
+chrono = "0.4.6"
+clap = "2.33.0"
+mysql = "16.0"
 slack-hook = "0.7"
