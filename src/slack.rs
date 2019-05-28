@@ -7,10 +7,16 @@ pub fn send_msg(msg: String) {
         process::exit(1);
     });
 
+    let env = env::var("ENVIRONMENT").ok();
+    let env = env
+        .as_ref()
+        .map(String::as_str)
+        .unwrap_or("");
+
     let slack = Slack::new(&*slack_url).unwrap();
 
     let p = PayloadBuilder::new()
-        .text(msg)
+        .text(format!("*{}*: {}", env, msg))
         .channel("#noisy-neighbours")
         .username("dbpulse")
         .icon_emoji(":warning:")
