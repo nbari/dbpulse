@@ -1,10 +1,9 @@
-FROM clux/muslrust
-RUN mkdir /source
-WORKDIR /source
-COPY . .
-RUN cargo build --release
-RUN strip ./target/x86_64-unknown-linux-musl/release/dbpulse
+FROM rust:1.35
 
-FROM scratch
-COPY --from=0 /source/target/x86_64-unknown-linux-musl/release/dbpulse /
-CMD ["./dbpulse"]
+WORKDIR /usr/src/dbpulse
+COPY . .
+
+RUN cargo install --path .
+RUN rm -rf ./target
+
+CMD ["dbpulse"]
