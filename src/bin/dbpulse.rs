@@ -1,6 +1,3 @@
-extern crate dbpulse;
-extern crate mysql;
-
 use dbpulse::slack;
 use std::{
     env,
