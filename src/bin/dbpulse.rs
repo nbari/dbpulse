@@ -14,7 +14,7 @@ fn main() {
         process::exit(1);
     });
 
-    let pool = mysql::Pool::new_manual(3,10, dsn).expect("Could not connect to MySQL");
+    let pool = mysql::Pool::new_manual(1,10, dsn).expect("Could not connect to MySQL");
 
     let utc: DateTime<Utc> = Utc::now();
 
@@ -54,7 +54,7 @@ fn main() {
 
 fn not_sleeping(pool: mysql::Pool) {
     let mut stmt = pool.prepare("SELECT user, time, state, info FROM information_schema.processlist WHERE command != 'Sleep' AND time >= ? ORDER BY time DESC, id LIMIT 1;").unwrap();
-    for row in stmt.execute((20,)).unwrap() {
+    for row in stmt.execute((60,)).unwrap() {
         let (user, time, state, info) = mysql::from_row::<(String, i64, String, String)>(row.unwrap());
         println!("{} {} {} {}", user, time, state, info);
         slack::send_msg(format!("user: {}, time: {}, state: {}, info: {}", user, time, state, info));
