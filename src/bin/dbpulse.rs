@@ -7,7 +7,13 @@ use std::{
 };
 use chrono::{DateTime, Utc};
 
+const PKG_VERSION: &'static str = env!("CARGO_PKG_VERSION");
+const PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
+
 fn main() {
+    let utc: DateTime<Utc> = Utc::now();
+    println!("[{} - {}, {}]", PKG_NAME, PKG_VERSION, utc);
+
     let dsn= env::var("DSN").unwrap_or_else(|e| {
         println!("could not find DSN: {}", e);
         process::exit(1);
@@ -18,9 +24,6 @@ fn main() {
     opts.read_timeout(Some(Duration::new(3,0)));
     opts.write_timeout(Some(Duration::new(3,0)));
     let pool = mysql::Pool::new_manual(1,5, opts).expect("Could not connect to MySQL");
-
-    let utc: DateTime<Utc> = Utc::now();
-    println!("Starting: {}", utc);
 
     loop {
         let wait_time = Duration::from_secs(30);
