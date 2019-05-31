@@ -1,11 +1,9 @@
+use chrono::{DateTime, Utc};
 use dbpulse::slack;
 use std::{
-    env,
-    process,
-    thread,
+    env, process, thread,
     time::{Duration, Instant, SystemTime},
 };
-use chrono::{DateTime, Utc};
 
 const PKG_VERSION: &'static str = env!("CARGO_PKG_VERSION");
 const PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
@@ -14,16 +12,16 @@ fn main() {
     let utc: DateTime<Utc> = Utc::now();
     println!("[{} - {}, {}]", PKG_NAME, PKG_VERSION, utc);
 
-    let dsn= env::var("DSN").unwrap_or_else(|e| {
+    let dsn = env::var("DSN").unwrap_or_else(|e| {
         println!("could not find DSN: {}", e);
         process::exit(1);
     });
 
     let mut opts = mysql::OptsBuilder::from_opts(dsn);
     opts.stmt_cache_size(0);
-    opts.read_timeout(Some(Duration::new(3,0)));
-    opts.write_timeout(Some(Duration::new(3,0)));
-    let pool = mysql::Pool::new_manual(1,5, opts).expect("Could not connect to MySQL");
+    opts.read_timeout(Some(Duration::new(3, 0)));
+    opts.write_timeout(Some(Duration::new(3, 0)));
+    let pool = mysql::Pool::new_manual(1, 5, opts).expect("Could not connect to MySQL");
 
     loop {
         let wait_time = Duration::from_secs(30);
@@ -38,7 +36,7 @@ fn main() {
                 f(pool);
             }));
         }
-        for t in threads{
+        for t in threads {
             let _ = t.join();
         }
 
@@ -67,31 +65,33 @@ fn not_sleeping(pool: mysql::Pool) {
     pool.prep_exec("CREATE TABLE IF NOT EXISTS dbpulse_rw (id INT NOT NULL, t INT(11) NOT NULL, PRIMARY KEY(id))", ()).unwrap();
 
     // write into table
-    let mut stmt = pool.prepare("INSERT INTO dbpulse_rw (id, t) VALUES (1, ?) ON DUPLICATE KEY UPDATE t=?").unwrap();
-    match stmt.execute((now,now,)) {
-        Ok(_)=> (),
+    let mut stmt = pool
+        .prepare("INSERT INTO dbpulse_rw (id, t) VALUES (1, ?) ON DUPLICATE KEY UPDATE t=?")
+        .unwrap();
+    match stmt.execute((now, now)) {
+        Ok(_) => (),
         Err(mysql::Error::IoError(e)) => {
             eprintln!("IoError: {}", e);
             send_msg(pool);
-            return
-        },
+            return;
+        }
         Err(e) => {
             eprintln!("{}", e);
-            return
+            return;
         }
     }
 
     //let items  = pool.prep_exec("SELECT t FROM dbpulse_rw WHERE id=1", ()).unwrap();
-    let items  = match pool.prep_exec("SELECT t FROM dbpulse_rw WHERE id=1", ()) {
+    let items = match pool.prep_exec("SELECT t FROM dbpulse_rw WHERE id=1", ()) {
         Ok(n) => n,
         Err(mysql::Error::IoError(e)) => {
             eprintln!("IoError: {}", e);
             send_msg(pool);
-            return
-        },
+            return;
+        }
         Err(e) => {
             eprintln!("{}", e);
-            return
+            return;
         }
     };
     for row in items {
@@ -108,8 +108,12 @@ fn send_msg(pool: mysql::Pool) {
     let mut stmt = pool.prepare("SELECT user, time, state, info FROM information_schema.processlist WHERE command != 'Sleep' AND time >= ? ORDER BY time DESC, id LIMIT 1;").unwrap();
 
     for row in stmt.execute((30,)).unwrap() {
-        let (user, time, state, info) = mysql::from_row::<(String, i64, String, String)>(row.unwrap());
+        let (user, time, state, info) =
+            mysql::from_row::<(String, i64, String, String)>(row.unwrap());
         println!("{} {} {} {}", user, time, state, info);
-        slack::send_msg(format!("user: {}, time: {}, state: {}, info: {}", user, time, state, info));
+        slack::send_msg(format!(
+            "user: {}, time: {}, state: {}, info: {}",
+            user, time, state, info
+        ));
     }
 }
