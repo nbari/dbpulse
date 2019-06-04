@@ -1,5 +1,5 @@
-use slack_hook::{Slack, PayloadBuilder};
-use std::{env,process};
+use slack_hook::{PayloadBuilder, Slack};
+use std::{env, process};
 
 pub fn send_msg(msg: String) {
     let slack_url = env::var("SLACK_WEBHOOK_URL").unwrap_or_else(|e| {
@@ -8,10 +8,7 @@ pub fn send_msg(msg: String) {
     });
 
     let env = env::var("ENVIRONMENT").ok();
-    let env = env
-        .as_ref()
-        .map(String::as_str)
-        .unwrap_or("");
+    let env = env.as_ref().map(String::as_str).unwrap_or("");
 
     let slack = Slack::new(&*slack_url).unwrap();
 
@@ -27,6 +24,6 @@ pub fn send_msg(msg: String) {
 
     match res {
         Ok(()) => println!("msg sent"),
-        Err(x) => println!("ERR: {:?}",x)
+        Err(x) => println!("ERR: {:?}", x),
     }
 }
