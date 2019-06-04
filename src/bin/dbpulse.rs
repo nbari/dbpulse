@@ -62,12 +62,25 @@ fn not_sleeping(pool: mysql::Pool) {
     };
 
     // create tem table
-    pool.prep_exec("CREATE TABLE IF NOT EXISTS dbpulse_rw (id INT NOT NULL, t INT(11) NOT NULL, PRIMARY KEY(id))", ()).unwrap();
+    match pool.prep_exec("CREATE TABLE IF NOT EXISTS dbpulse_rw (id INT NOT NULL, t INT(11) NOT NULL, PRIMARY KEY(id))", ()) {
+        Ok(_) => (),
+        Err(e) => {
+            eprintln!("{}", e);
+            return;
+        }
+    }
 
     // write into table
-    let mut stmt = pool
+    let mut stmt = match pool
         .prepare("INSERT INTO dbpulse_rw (id, t) VALUES (1, ?) ON DUPLICATE KEY UPDATE t=?")
-        .unwrap();
+    {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            eprintln!("{}", e);
+            return;
+        }
+    };
+
     match stmt.execute((now, now)) {
         Ok(_) => (),
         Err(mysql::Error::IoError(e)) => {
@@ -81,7 +94,6 @@ fn not_sleeping(pool: mysql::Pool) {
         }
     }
 
-    //let items  = pool.prep_exec("SELECT t FROM dbpulse_rw WHERE id=1", ()).unwrap();
     let items = match pool.prep_exec("SELECT t FROM dbpulse_rw WHERE id=1", ()) {
         Ok(n) => n,
         Err(mysql::Error::IoError(e)) => {
@@ -105,7 +117,13 @@ fn not_sleeping(pool: mysql::Pool) {
 }
 
 fn send_msg(pool: mysql::Pool) {
-    let mut stmt = pool.prepare("SELECT user, time, state, info FROM information_schema.processlist WHERE command != 'Sleep' AND time >= ? ORDER BY time DESC, id LIMIT 1;").unwrap();
+    let mut stmt = match pool.prepare("SELECT user, time, state, info FROM information_schema.processlist WHERE command != 'Sleep' AND time >= ? ORDER BY time DESC, id LIMIT 1;") {
+        Ok(stmt) => stmt,
+        Err(e) => {
+            eprintln!("{}", e);
+            return;
+        }
+    };
 
     for row in stmt.execute((30,)).unwrap() {
         let (user, time, state, info) =
