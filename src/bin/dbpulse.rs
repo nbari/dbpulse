@@ -42,8 +42,13 @@ fn main() {
 
         let runtime = start.elapsed();
         if let Some(remaining) = wait_time.checked_sub(runtime) {
+            println!(
+                "sleeping for: {}s, pool: {:?}, now: {}",
+                remaining.as_secs(),
+                pool,
+                Utc::now()
+            );
             thread::sleep(remaining);
-            eprintln!("sleeping for: {:?}", remaining);
         }
     }
 }
