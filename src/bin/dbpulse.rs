@@ -43,6 +43,7 @@ fn main() {
         let runtime = start.elapsed();
         if let Some(remaining) = wait_time.checked_sub(runtime) {
             thread::sleep(remaining);
+            eprintln!("sleeping for: {:?}", remaining);
         }
     }
 }
