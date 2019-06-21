@@ -67,7 +67,7 @@ fn not_sleeping(pool: mysql::Pool) {
         Err(_) => panic!("SystemTime before UNIX EPOCH!"),
     };
 
-    // create tem table
+    // create table
     match pool.prep_exec("CREATE TABLE IF NOT EXISTS dbpulse_rw (id INT NOT NULL, t INT(11) NOT NULL, PRIMARY KEY(id))", ()) {
         Ok(_) => (),
         Err(e) => {
