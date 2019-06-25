@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use dbpulse::queries;
 use dbpulse::slack;
 use std::{
-    env, error, process, thread,
+    env, process, thread,
     time::{Duration, Instant, SystemTime},
 };
 
@@ -27,42 +27,36 @@ fn main() {
     loop {
         let wait_time = Duration::from_secs(30);
         let start = Instant::now();
-        let mut funcs: Vec<fn()> = Vec::new();
-        // funcs.push(another function);
-        funcs.push(test_rw);
-        let mut threads = Vec::new();
-        for f in funcs {
-            //let pool = pool.clone();
-            threads.push(thread::spawn(move || {
-                f();
-            }));
-        }
-        for t in threads {
-            let _ = t.join();
+        let pool = pool.clone();
+        let q = queries::new(pool);
+
+        let now = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(n) => n.as_secs(),
+            Err(_) => 0,
+        };
+
+        // test RW
+        match q.test_rw(now) {
+            Ok(_) => {}
+            Err(mysql::Error::IoError(e)) => {
+                eprintln!("IoError: {}", e);
+                //send_msg(pool);
+                return;
+            }
+            Err(e) => {
+                eprintln!("{}", e);
+                return;
+            }
         }
 
         let runtime = start.elapsed();
         if let Some(remaining) = wait_time.checked_sub(runtime) {
-            println!(
-                "sleeping for: {}s, pool: {:?}, now: {}",
-                remaining.as_secs(),
-                pool,
-                Utc::now()
-            );
             thread::sleep(remaining);
         }
     }
 }
 
-fn test_rw() {}
-//fn wsrep_status(pool: mysql::Pool) {
-//let mut stmt = pool.prepare("SHOW GLOBAL STATUS WHERE Variable_name IN ('wsrep_ready', 'wsrep_cluster_size', 'wsrep_cluster_status', 'wsrep_connected', 'wsrep_local_state', 'wsrep_local_index');").unwrap();
-//for row in stmt.execute(()).unwrap() {
-//let (k, v) = mysql::from_row::<(String, String)>(row.unwrap());
-//println!("{} {}", k, v);
-//}
-//}
-
+/*
 fn send_msg(pool: mysql::Pool) {
     let mut stmt = match pool.prepare("SELECT user, time, state, info FROM information_schema.processlist WHERE command != 'Sleep' AND time >= ? ORDER BY time DESC, id LIMIT 1;") {
         Ok(stmt) => stmt,
@@ -82,3 +76,4 @@ fn send_msg(pool: mysql::Pool) {
         ));
     }
 }
+*/

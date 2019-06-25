@@ -1,5 +1,6 @@
-use std::{error, time::SystemTime};
+use std::{error::Error, fmt};
 
+#[derive(Debug)]
 pub struct Queries {
     pool: mysql::Pool,
 }
@@ -8,14 +9,20 @@ pub fn new(pool: mysql::Pool) -> Queries {
     return Queries { pool: pool };
 }
 
+impl Error for Queries {}
+
+impl fmt::Display for Queries {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Oh no, something bad went down")
+    }
+}
+
 impl Queries {
-    pub fn test_rw(&self) -> Result<bool, Box<error::Error>> {
+    pub fn test_rw(&self, now: u64) -> Result<(), mysql::Error> {
         let pool = &self.pool.clone();
-        let n = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
-        let now = n.as_secs();
 
         // create table
-        &self.pool.prep_exec("CREATE TABLE IF NOT EXISTS dbpulse_rw (id INT NOT NULL, t INT(11) NOT NULL, PRIMARY KEY(id))", ())?;
+        pool.prep_exec("CREATE TABLE IF NOT EXISTS dbpulse_rw (id INT NOT NULL, t INT(11) NOT NULL, PRIMARY KEY(id))", ())?;
 
         // write into table
         let mut stmt = pool
@@ -27,17 +34,20 @@ impl Queries {
                 for row in items {
                     match row {
                         Ok(row) => {
-                            let rs = mysql::from_row::<u64>(row);
-                            if now != rs {
-                                let pool = pool.clone();
-                                //                                send_msg(pool);
-                            }
+                            match mysql::from_row_opt::<u64>(row) {
+                                Ok(rs) => {
+                                    if now != rs {
+                                        //return false);
+                                    }
+                                }
+                                Err(e) => println!("{}", e),
+                            };
                         }
                         Err(e) => println!("{}", e),
                     }
                 }
             })?;
 
-        Ok(true)
+        Ok(())
     }
 }
