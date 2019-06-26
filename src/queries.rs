@@ -1,4 +1,9 @@
-use std::{error::Error, fmt};
+use std::{error::Error as StdError, fmt};
+
+#[derive(Debug)]
+pub enum Error {
+    MySQL(mysql::Error),
+}
 
 #[derive(Debug)]
 pub struct Queries {
@@ -9,16 +14,8 @@ pub fn new(pool: mysql::Pool) -> Queries {
     return Queries { pool: pool };
 }
 
-impl Error for Queries {}
-
-impl fmt::Display for Queries {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Oh no, something bad went down")
-    }
-}
-
 impl Queries {
-    pub fn test_rw(&self, now: u64) -> Result<(), mysql::Error> {
+    pub fn test_rw(&self, now: u64) -> Result<(), Error> {
         let pool = &self.pool.clone();
 
         // create table
