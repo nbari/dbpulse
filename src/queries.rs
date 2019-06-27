@@ -49,7 +49,6 @@ impl Queries {
         let mut stmt = pool
             .prepare("INSERT INTO dbpulse_rw (id, t) VALUES (1, ?) ON DUPLICATE KEY UPDATE t=?")?;
         stmt.execute((now, now))?;
-        Ok(())
         /*
         pool.prep_exec("SELECT t FROM dbpulse_rw WHERE id=1", ())
             .map(|items| {
@@ -74,10 +73,8 @@ impl Queries {
                         }
                     }
                 }
-                Ok(())
             })?;
         */
-        //.ok();
-        // Ok(());
+        Ok(())
     }
 }
