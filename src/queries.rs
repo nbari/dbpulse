@@ -1,11 +1,35 @@
-use std::{error::Error as StdError, fmt};
+use std::{error::Error, fmt};
 
 #[derive(Debug)]
-pub enum Error {
+pub enum QueriesError {
     MySQL(mysql::Error),
+    NotMatching,
 }
 
-#[derive(Debug)]
+impl fmt::Display for QueriesError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            QueriesError::MySQL(ref err) => err.fmt(f),
+            QueriesError::NotMatching => write!(f, "Not matching"),
+        }
+    }
+}
+
+impl Error for QueriesError {
+    fn description(&self) -> &str {
+        match *self {
+            QueriesError::MySQL(ref err) => err.description(),
+            QueriesError::NotMatching => "Unknown error!",
+        }
+    }
+}
+
+impl From<mysql::Error> for QueriesError {
+    fn from(cause: mysql::Error) -> QueriesError {
+        QueriesError::MySQL(cause)
+    }
+}
+
 pub struct Queries {
     pool: mysql::Pool,
 }
@@ -15,7 +39,7 @@ pub fn new(pool: mysql::Pool) -> Queries {
 }
 
 impl Queries {
-    pub fn test_rw(&self, now: u64) -> Result<(), Error> {
+    pub fn test_rw(&self, now: u64) -> Result<(), QueriesError> {
         let pool = &self.pool.clone();
 
         // create table
@@ -25,7 +49,8 @@ impl Queries {
         let mut stmt = pool
             .prepare("INSERT INTO dbpulse_rw (id, t) VALUES (1, ?) ON DUPLICATE KEY UPDATE t=?")?;
         stmt.execute((now, now))?;
-
+        Ok(())
+        /*
         pool.prep_exec("SELECT t FROM dbpulse_rw WHERE id=1", ())
             .map(|items| {
                 for row in items {
@@ -34,17 +59,25 @@ impl Queries {
                             match mysql::from_row_opt::<u64>(row) {
                                 Ok(rs) => {
                                     if now != rs {
-                                        //return false);
+                                        return Result::Err(Box::new(Error::NotMatching(
+                                            "Oops".into(),
+                                        )));
                                     }
                                 }
-                                Err(e) => println!("{}", e),
+                                Err(e) => {
+                                    return Result::Err(Box::new(Error::MySQL(e.into())));
+                                }
                             };
                         }
-                        Err(e) => println!("{}", e),
+                        Err(e) => {
+                            return Result::Err(Box::new(Error::MySQL(e)));
+                        }
                     }
                 }
+                Ok(())
             })?;
-
-        Ok(())
+        */
+        //.ok();
+        // Ok(());
     }
 }
