@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use dbpulse::queries;
-use dbpulse::slack;
+//use dbpulse::slack;
 use std::{
     env, process, thread,
     time::{Duration, Instant, SystemTime},
@@ -37,17 +37,22 @@ fn main() {
 
         // test RW
         match q.test_rw(now) {
-            Ok(_) => {}
-            Err(mysql::Error::IoError(e)) => {
-                eprintln!("IoError: {}", e);
-                //send_msg(pool);
-                return;
-            }
-            Err(e) => {
-                eprintln!("{}", e);
-                return;
-            }
-        }
+            //            queries::QueriesError::MySQL => {}
+            Err(e) => match e {
+                queries::QueriesError::MySQL(e) => {
+                    println!("{:?}", e);
+                }
+                queries::QueriesError::NotMatching => {
+                    println!("{:?}", e);
+                }
+            },
+            Ok(_) => {} //Err(mysql::Error::IoError(e)) => {
+                        //eprintln!("IoError: {}", e);
+                        ////send_msg(pool);
+                        //return;
+                        //}
+                        // return;
+        };
 
         let runtime = start.elapsed();
         if let Some(remaining) = wait_time.checked_sub(runtime) {
