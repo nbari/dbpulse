@@ -25,7 +25,7 @@ fn main() {
     let pool = mysql::Pool::new_manual(1, 5, opts).expect("Could not connect to MySQL");
 
     loop {
-        let wait_time = Duration::from_secs(30);
+        let wait_time = Duration::from_secs(5);
         let start = Instant::now();
         let pool = pool.clone();
         let q = queries::new(pool);
@@ -42,7 +42,9 @@ fn main() {
                     eprintln!("IoError: {}", e);
                     //send_msg(pool);
                 }
-                _ => {}
+                _ => {
+                    eprintln!("Error: {}", e);
+                }
             },
             Err(queries::Error::NotMatching(e)) => {
                 eprintln!("NotMatching: {}", e);
