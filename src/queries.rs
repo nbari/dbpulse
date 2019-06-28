@@ -45,20 +45,10 @@ impl Queries {
 
         let rows = pool.prep_exec("SELECT t FROM dbpulse_rw WHERE id=1", ())?;
         for row in rows {
-            match row {
-                Ok(row) => match mysql::from_row_opt::<u64>(row) {
-                    Ok(row) => {
-                        if now != row {
-                            return Result::Err(Error::NotMatching("sopas".into()));
-                        }
-                    }
-                    Err(e) => {
-                        return Result::Err(Error::MySQL(e.into()));
-                    }
-                },
-                Err(e) => {
-                    return Result::Err(Error::MySQL(e));
-                }
+            let row = row.map_err(Error::MySQL)?;
+            let row = mysql::from_row_opt::<u64>(row).map_err(|e| Error::MySQL(e.into()))?;
+            if now != row {
+                return Err(Error::NotMatching("no matching...".into()));
             }
         }
         Ok(())
