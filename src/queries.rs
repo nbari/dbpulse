@@ -1,32 +1,25 @@
-use std::{error::Error, fmt};
+use std::{error, fmt};
 
 #[derive(Debug)]
-pub enum QueriesError {
+pub enum Error {
     MySQL(mysql::Error),
-    NotMatching,
+    NotMatching(String),
 }
 
-impl fmt::Display for QueriesError {
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            QueriesError::MySQL(ref err) => err.fmt(f),
-            QueriesError::NotMatching => write!(f, "Not matching"),
+            Error::MySQL(ref err) => err.fmt(f),
+            Error::NotMatching(ref err) => err.fmt(f),
         }
     }
 }
 
-impl Error for QueriesError {
-    fn description(&self) -> &str {
-        match *self {
-            QueriesError::MySQL(ref err) => err.description(),
-            QueriesError::NotMatching => "Unknown error!",
-        }
-    }
-}
+impl error::Error for Error {}
 
-impl From<mysql::Error> for QueriesError {
-    fn from(cause: mysql::Error) -> QueriesError {
-        QueriesError::MySQL(cause)
+impl From<mysql::Error> for Error {
+    fn from(err: mysql::Error) -> Self {
+        Error::MySQL(err)
     }
 }
 
@@ -39,7 +32,7 @@ pub fn new(pool: mysql::Pool) -> Queries {
 }
 
 impl Queries {
-    pub fn test_rw(&self, now: u64) -> Result<(), QueriesError> {
+    pub fn test_rw(&self, now: u64) -> Result<(), Error> {
         let pool = &self.pool.clone();
 
         // create table
@@ -49,32 +42,25 @@ impl Queries {
         let mut stmt = pool
             .prepare("INSERT INTO dbpulse_rw (id, t) VALUES (1, ?) ON DUPLICATE KEY UPDATE t=?")?;
         stmt.execute((now, now))?;
-        /*
-        pool.prep_exec("SELECT t FROM dbpulse_rw WHERE id=1", ())
-            .map(|items| {
-                for row in items {
-                    match row {
-                        Ok(row) => {
-                            match mysql::from_row_opt::<u64>(row) {
-                                Ok(rs) => {
-                                    if now != rs {
-                                        return Result::Err(Box::new(Error::NotMatching(
-                                            "Oops".into(),
-                                        )));
-                                    }
-                                }
-                                Err(e) => {
-                                    return Result::Err(Box::new(Error::MySQL(e.into())));
-                                }
-                            };
-                        }
-                        Err(e) => {
-                            return Result::Err(Box::new(Error::MySQL(e)));
+
+        let rows = pool.prep_exec("SELECT t FROM dbpulse_rw WHERE id=1", ())?;
+        for row in rows {
+            match row {
+                Ok(row) => match mysql::from_row_opt::<u64>(row) {
+                    Ok(row) => {
+                        if now != row {
+                            return Result::Err(Error::NotMatching("sopas".into()));
                         }
                     }
+                    Err(e) => {
+                        return Result::Err(Error::MySQL(e.into()));
+                    }
+                },
+                Err(e) => {
+                    return Result::Err(Error::MySQL(e));
                 }
-            })?;
-        */
+            }
+        }
         Ok(())
     }
 }

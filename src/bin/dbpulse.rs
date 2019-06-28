@@ -37,15 +37,15 @@ fn main() {
 
         // test RW
         match q.test_rw(now) {
-            Err(queries::QueriesError::MySQL(e)) => match e {
+            Err(queries::Error::MySQL(e)) => match e {
                 mysql::Error::IoError(e) => {
                     eprintln!("IoError: {}", e);
                     //send_msg(pool);
                 }
                 _ => {}
             },
-            Err(e @ queries::QueriesError::NotMatching) => {
-                println!("{:?}", e);
+            Err(queries::Error::NotMatching(e)) => {
+                eprintln!("NotMatching: {}", e);
             }
             Ok(_) => {}
         };
