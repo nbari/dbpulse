@@ -36,23 +36,33 @@ fn main() {
         };
 
         // test RW
-        match q.test_rw(now) {
+        //        let mut elapsed = 0;
+        let (elapsed, restart): (usize, bool) = match q.test_rw(now) {
             Err(queries::Error::MySQL(e)) => match e {
                 mysql::Error::IoError(e) => {
                     eprintln!("IoError: {}", e);
+                    (0, true)
                     //send_msg(pool);
                 }
                 _ => {
                     eprintln!("Error: {}", e);
+                    (0, true)
                 }
             },
             Err(queries::Error::NotMatching(e)) => {
                 eprintln!("NotMatching: {}", e);
+                (0, false)
             }
-            Ok(_) => {}
+            Err(e @ queries::Error::NoRecords) => {
+                eprintln!("{}", e);
+                (0, false)
+            }
+            Ok(t) => (t, false),
         };
 
+        if restart {}
         let runtime = start.elapsed();
+        println!("elapsed: {}, runtime: {:?}", elapsed, runtime);
         if let Some(remaining) = wait_time.checked_sub(runtime) {
             thread::sleep(remaining);
         }
