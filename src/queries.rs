@@ -1,11 +1,11 @@
 use rand::Rng;
 use std::{error, fmt};
-use std::{thread, time::Duration};
 
 #[derive(Debug)]
 pub enum Error {
     MySQL(mysql::Error),
     NotMatching(String),
+    NoRecords,
 }
 
 impl fmt::Display for Error {
@@ -13,6 +13,7 @@ impl fmt::Display for Error {
         match *self {
             Error::MySQL(ref err) => err.fmt(f),
             Error::NotMatching(ref err) => err.fmt(f),
+            Error::NoRecords => write!(f, "No records found"),
         }
     }
 }
@@ -79,8 +80,6 @@ impl Queries {
         }
         tr.rollback()?;
 
-        thread::sleep(Duration::from_secs(3));
-
         // update record 1 with now
         let mut stmt = pool.prepare(
             "INSERT INTO dbpulse_rw (id, t1) VALUES (0, ?) ON DUPLICATE KEY UPDATE t1=?",
@@ -88,12 +87,16 @@ impl Queries {
         stmt.execute((now, now))?;
 
         let result = pool.prep_exec(
-            "SELECT TIMESTAMPDIFF(SECOND, FROM_UNIXTIME(t1), t2) from dbpulse_rw where id=0;",
+            "SELECT TIMESTAMPDIFF(SECOND, FROM_UNIXTIME(t1), t2) from dbpulse_rw where id=0",
             (),
         )?;
-        let row = result.last().unwrap().map_err(Error::MySQL)?;
-        let elapsed = mysql::from_row_opt::<usize>(row).map_err(|e| Error::MySQL(e.into()))?;
-        println!("elapsed: {}", elapsed);
-        Ok(elapsed)
+
+        match result.last() {
+            Some(row) => {
+                let row = row.map_err(Error::MySQL)?;
+                Ok(mysql::from_row_opt::<usize>(row).map_err(|e| Error::MySQL(e.into()))?)
+            }
+            None => Err(Error::NoRecords),
+        }
     }
 }
