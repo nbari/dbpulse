@@ -1,18 +1,24 @@
-use chrono::{DateTime, Utc};
 use dbpulse::queries;
 //use dbpulse::slack;
+use serde::{Deserialize, Serialize};
+use serde_json;
 use std::{
     env, process, thread,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-const PKG_VERSION: &'static str = env!("CARGO_PKG_VERSION");
-const PKG_NAME: &'static str = env!("CARGO_PKG_NAME");
+#[derive(Serialize, Deserialize, Debug, Default)]
+struct Pulse {
+    name: String,
+    time: u128,
+    io_error: bool,
+    sql_error: bool,
+    data_error: bool,
+    db_runtime_s: usize,
+    runtime_ms: u128,
+}
 
 fn main() {
-    let utc: DateTime<Utc> = Utc::now();
-    println!("[{} - {}, {}]", PKG_NAME, PKG_VERSION, utc);
-
     let dsn = env::var("DSN").unwrap_or_else(|e| {
         println!("could not find DSN: {}", e);
         process::exit(1);
@@ -25,46 +31,55 @@ fn main() {
     let pool = mysql::Pool::new_manual(1, 5, opts).expect("Could not connect to MySQL");
 
     loop {
-        let wait_time = Duration::from_secs(5);
-        let start = Instant::now();
+        let mut pulse = Pulse::default();
         let pool = pool.clone();
         let q = queries::new(pool);
-
-        let now = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-            Ok(n) => n.as_secs(),
-            Err(_) => 0,
-        };
+        let start = Instant::now();
+        let wait_time = Duration::from_secs(30);
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        pulse.time = now.as_nanos();
 
         // test RW
-        let (mut elapsed, mut restart): (usize, bool) = (0, false);
-        match q.test_rw(now) {
+        let mut restart: bool = false;
+        match q.test_rw(now.as_secs()) {
             Err(queries::Error::MySQL(e)) => match e {
                 mysql::Error::IoError(e) => {
                     eprintln!("IoError: {}", e);
+                    pulse.io_error = true;
                     restart = true;
-                    //send_msg(pool);
                 }
                 _ => {
                     eprintln!("Error: {}", e);
+                    pulse.sql_error = true;
                     restart = true;
                 }
             },
             Err(queries::Error::NotMatching(e)) => {
                 eprintln!("NotMatching: {}", e);
+                pulse.data_error = true;
                 restart = true;
             }
             Err(e @ queries::Error::NoRecords) => {
                 eprintln!("{}", e);
+                pulse.data_error = true;
                 restart = false;
             }
-            Ok(t) => elapsed = t,
+            Ok(t) => pulse.db_runtime_s = t,
         };
 
-        if restart {}
         let runtime = start.elapsed();
-        println!("elapsed: {}, runtime: {:?}", elapsed, runtime);
-        if let Some(remaining) = wait_time.checked_sub(runtime) {
-            thread::sleep(remaining);
+        pulse.runtime_ms = runtime.as_millis();
+
+        if let Ok(serialized) = serde_json::to_string(&pulse) {
+            println!("{}", serialized);
+        }
+
+        if restart {
+            thread::sleep(Duration::from_secs(1));
+        } else {
+            if let Some(remaining) = wait_time.checked_sub(runtime) {
+                thread::sleep(remaining);
+            }
         }
     }
 }
