@@ -1,9 +1,9 @@
-use dbpulse::queries;
+use dbpulse::{envs, queries};
 //use dbpulse::slack;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::{
-    env, process, thread,
+    process, thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -14,30 +14,35 @@ struct Pulse {
     io_error: bool,
     sql_error: bool,
     data_error: bool,
-    db_runtime_s: usize,
+    db_runtime_s: isize,
     runtime_ms: u128,
 }
 
 fn main() {
-    let dsn = env::var("DSN").unwrap_or_else(|e| {
-        println!("could not find DSN: {}", e);
-        process::exit(1);
-    });
-
-    let mut opts = mysql::OptsBuilder::from_opts(dsn);
+    let mut opts = mysql::OptsBuilder::from_opts(envs::get_env("DSN"));
     opts.stmt_cache_size(0);
-    opts.read_timeout(Some(Duration::new(5, 0)));
-    opts.write_timeout(Some(Duration::new(5, 0)));
+    opts.read_timeout(Some(Duration::new(3, 0)));
+    opts.write_timeout(Some(Duration::new(3, 0)));
     let pool = mysql::Pool::new_manual(1, 2, opts).expect("Could not connect to MySQL");
+    let every: u64 = match envs::get_env("DBPULSE_EVERY").parse() {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("{}", e);
+            process::exit(1);
+        }
+    };
 
     loop {
         let mut pulse = Pulse::default();
         let pool = pool.clone();
         let q = queries::new(pool);
         let start = Instant::now();
-        let wait_time = Duration::from_secs(30);
+        let wait_time = Duration::from_secs(every);
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+
+        // add start time
         pulse.time = now.as_nanos();
+        pulse.name = envs::get_env("DBPULSE_ENVIRONMENT");
 
         // test RW
         let mut restart: bool = false;
