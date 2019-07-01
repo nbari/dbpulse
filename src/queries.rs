@@ -108,4 +108,19 @@ impl Queries {
             .ok_or(Error::RowExpected)??;
         Ok(mysql::from_row_opt::<isize>(row)?)
     }
+
+    pub fn drop_table(&self) -> Result<(), Error> {
+        let pool = &self.pool.clone();
+        pool.prep_exec("DROP TABLE dbpulse_rw", ())?;
+        Ok(())
+    }
+
+    pub fn get_user_time_state_info(&self) -> Result<(String, i64, String, String), Error> {
+        let pool = &self.pool.clone();
+        let row= pool.prepare("SELECT user, time, state, info FROM information_schema.processlist WHERE command != 'Sleep' AND time >= ? ORDER BY time DESC, id LIMIT 1")?
+        .execute((5,))?
+        .last()
+        .ok_or(Error::RowExpected)??;
+        Ok(mysql::from_row_opt::<(String, i64, String, String)>(row)?)
+    }
 }
