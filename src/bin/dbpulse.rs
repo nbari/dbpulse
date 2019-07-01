@@ -1,5 +1,5 @@
+use dbpulse::slack;
 use dbpulse::{envs, queries};
-//use dbpulse::slack;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::{
@@ -18,19 +18,37 @@ struct Pulse {
     runtime_ms: u128,
 }
 
+#[derive(Debug, Default)]
+struct Threshold {
+    healthy: usize,
+    unhealthy: usize,
+}
+
 fn main() {
     let mut opts = mysql::OptsBuilder::from_opts(envs::get_env("DSN"));
     opts.stmt_cache_size(0);
     opts.read_timeout(Some(Duration::new(3, 0)));
     opts.write_timeout(Some(Duration::new(3, 0)));
     let pool = mysql::Pool::new_manual(1, 2, opts).expect("Could not connect to MySQL");
-    let every: u64 = match envs::get_env("DBPULSE_EVERY").parse() {
-        Ok(n) => n,
-        Err(e) => {
+    let every: u64 = envs::get_env("EVERY").parse().unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        process::exit(1);
+    });
+    let threshold_healthy: usize = envs::get_env("THRESHOLD_HEALTHY")
+        .parse()
+        .unwrap_or_else(|e| {
             eprintln!("{}", e);
             process::exit(1);
-        }
-    };
+        });
+    let threshold_unhealthy: usize =
+        envs::get_env("THRESHOLD_UNHEALTHY")
+            .parse()
+            .unwrap_or_else(|e| {
+                eprintln!("{}", e);
+                process::exit(1);
+            });
+    let mut threshold = Threshold::default();
+    let mut skip_ok_alert: bool = true;
 
     loop {
         let mut pulse = Pulse::default();
@@ -42,7 +60,7 @@ fn main() {
 
         // add start time
         pulse.time = now.as_nanos();
-        pulse.name = envs::get_env("DBPULSE_ENVIRONMENT");
+        pulse.name = envs::get_env("ENVIRONMENT");
 
         // test RW
         let mut restart: bool = false;
@@ -52,11 +70,14 @@ fn main() {
                     eprintln!("IoError: {}", e);
                     pulse.io_error = true;
                     restart = true;
+                    threshold.unhealthy += 1;
                 }
                 _ => {
                     eprintln!("Error: {}", e);
                     pulse.sql_error = true;
                     restart = true;
+                    threshold.unhealthy += 1;
+                    drop(q.drop_table());
                 }
             },
             Err(queries::Error::RowError(e)) => match e {
@@ -64,11 +85,13 @@ fn main() {
                     eprintln!("Error: {}", e);
                     pulse.sql_error = true;
                     restart = true;
+                    threshold.unhealthy += 1;
                 }
             },
             Err(queries::Error::NotMatching(e)) => {
                 eprintln!("NotMatching: {}", e);
                 pulse.data_error = true;
+                threshold.unhealthy += 1;
                 restart = true;
             }
             Err(e @ queries::Error::RowExpected) => {
@@ -76,7 +99,16 @@ fn main() {
                 pulse.data_error = true;
                 restart = false;
             }
-            Ok(t) => pulse.db_runtime_s = t,
+            Ok(t) => {
+                pulse.db_runtime_s = t;
+                if threshold.unhealthy > 0 {
+                    threshold.unhealthy = 0;
+                    threshold.healthy = 1;
+                    skip_ok_alert = false;
+                } else {
+                    threshold.healthy += 1;
+                }
+            }
         };
 
         let runtime = start.elapsed();
@@ -86,6 +118,7 @@ fn main() {
             println!("{}", serialized);
         }
 
+        // don't wait if get an error, try try again after 1 second
         if restart {
             thread::sleep(Duration::from_secs(1));
         } else {
@@ -93,27 +126,19 @@ fn main() {
                 thread::sleep(remaining);
             }
         }
-    }
-}
 
-/*
-fn send_msg(pool: mysql::Pool) {
-    let mut stmt = match pool.prepare("SELECT user, time, state, info FROM information_schema.processlist WHERE command != 'Sleep' AND time >= ? ORDER BY time DESC, id LIMIT 1;") {
-        Ok(stmt) => stmt,
-        Err(e) => {
-            eprintln!("{}", e);
-            return;
+        // Alert onlye once
+        if threshold.unhealthy == threshold_unhealthy {
+            println!("threshold BAD: {}", threshold.unhealthy);
+            if let Ok(rs) = q.get_user_time_state_info() {
+                let (user, time, state, info) = rs;
+                slack::send_msg(format!(
+                    "user: {}, time: {}, state: {}, info: {}",
+                    user, time, state, info
+                ))
+            }
+        } else if threshold.healthy == threshold_healthy && !skip_ok_alert {
+            println!("threshold OK: {}", threshold.healthy);
         }
-    };
-
-    for row in stmt.execute((30,)).unwrap() {
-        let (user, time, state, info) =
-            mysql::from_row::<(String, i64, String, String)>(row.unwrap());
-        println!("{} {} {} {}", user, time, state, info);
-        slack::send_msg(format!(
-            "user: {}, time: {}, state: {}, info: {}",
-            user, time, state, info
-        ));
     }
 }
-*/
