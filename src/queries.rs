@@ -5,7 +5,8 @@ use std::{error, fmt};
 pub enum Error {
     MySQL(mysql::Error),
     NotMatching(String),
-    NoRecords,
+    RowError(mysql::FromRowError),
+    RowExpected,
 }
 
 impl fmt::Display for Error {
@@ -13,7 +14,8 @@ impl fmt::Display for Error {
         match *self {
             Error::MySQL(ref err) => err.fmt(f),
             Error::NotMatching(ref err) => err.fmt(f),
-            Error::NoRecords => write!(f, "No records found"),
+            Error::RowError(ref err) => err.fmt(f),
+            Error::RowExpected => write!(f, "row expected"),
         }
     }
 }
@@ -23,6 +25,12 @@ impl error::Error for Error {}
 impl From<mysql::Error> for Error {
     fn from(err: mysql::Error) -> Self {
         Error::MySQL(err)
+    }
+}
+
+impl From<mysql::FromRowError> for Error {
+    fn from(err: mysql::FromRowError) -> Self {
+        Error::RowError(err)
     }
 }
 
@@ -58,13 +66,10 @@ impl Queries {
 
         // check if stored record matches
         let mut stmt = pool.prepare("SELECT t1 FROM dbpulse_rw Where id=?")?;
-        let rows = stmt.execute((num,))?;
-        for row in rows {
-            let row = row.map_err(Error::MySQL)?;
-            let row = mysql::from_row_opt::<u64>(row).map_err(|e| Error::MySQL(e.into()))?;
-            if now != row {
-                return Err(Error::NotMatching(format!("{} != {}", now, row)));
-            }
+        let result = stmt.execute((num,))?.last().ok_or(Error::RowExpected)??;
+        let row = mysql::from_row_opt::<u64>(result)?;
+        if now != row {
+            return Err(Error::NotMatching(format!("{} != {}", now, row)));
         }
 
         // check transaction setting all records to 0
@@ -73,7 +78,7 @@ impl Queries {
         let rows = tr.prep_exec("SELECT t1 FROM dbpulse_rw", ())?;
         for row in rows {
             let row = row.map_err(Error::MySQL)?;
-            let row = mysql::from_row_opt::<u64>(row).map_err(|e| Error::MySQL(e.into()))?;
+            let row = mysql::from_row_opt::<u64>(row)?;
             if row != 0 {
                 return Err(Error::NotMatching(format!("{} != {}", row, 0)));
             }
@@ -81,22 +86,17 @@ impl Queries {
         tr.rollback()?;
 
         // update record 1 with now
-        let mut stmt = pool.prepare(
-            "INSERT INTO dbpulse_rw (id, t1) VALUES (0, ?) ON DUPLICATE KEY UPDATE t1=?",
-        )?;
-        stmt.execute((now, now))?;
+        pool.prepare("INSERT INTO dbpulse_rw (id, t1) VALUES (0, ?) ON DUPLICATE KEY UPDATE t1=?")?
+            .execute((now, now))?;
 
-        let result = pool.prep_exec(
-            "SELECT TIMESTAMPDIFF(SECOND, FROM_UNIXTIME(t1), t2) from dbpulse_rw where id=0",
-            (),
-        )?;
-
-        match result.last() {
-            Some(row) => {
-                let row = row.map_err(Error::MySQL)?;
-                Ok(mysql::from_row_opt::<usize>(row).map_err(|e| Error::MySQL(e.into()))?)
-            }
-            None => Err(Error::NoRecords),
-        }
+        // get elapsed time
+        let row = pool
+            .prep_exec(
+                "SELECT TIMESTAMPDIFF(SECOND, FROM_UNIXTIME(t1), t2) from dbpulse_rw where id=0",
+                (),
+            )?
+            .last()
+            .ok_or(Error::RowExpected)??;
+        Ok(mysql::from_row_opt::<usize>(row)?)
     }
 }
