@@ -116,6 +116,8 @@ impl Queries {
     }
 
     pub fn get_user_time_state_info(&self) -> Result<(String, i64, String, String), Error> {
+        // to lock for writes
+        // FLUSH TABLES WITH READ LOCK;
         let pool = &self.pool.clone();
         let row= pool.prepare("SELECT user, time, state, info FROM information_schema.processlist WHERE command != 'Sleep' AND time >= ? ORDER BY time DESC, id LIMIT 1")?
         .execute((5,))?
