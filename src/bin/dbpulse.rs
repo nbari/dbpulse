@@ -1,3 +1,4 @@
+use clap::App;
 use dbpulse::slack;
 use dbpulse::{envs, queries};
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,10 @@ struct Threshold {
 }
 
 fn main() {
+    App::new(env!("CARGO_PKG_NAME"))
+        .version(env!("CARGO_PKG_VERSION"))
+        .get_matches();
+
     let mut opts = mysql::OptsBuilder::from_opts(envs::get_env("DSN"));
     opts.stmt_cache_size(0);
     opts.read_timeout(Some(Duration::new(3, 0)));
