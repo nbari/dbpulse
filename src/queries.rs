@@ -1,5 +1,6 @@
 use rand::Rng;
 use std::{error, fmt};
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub enum Error {
@@ -43,33 +44,39 @@ pub fn new(pool: mysql::Pool) -> Queries {
 }
 
 impl Queries {
-    pub fn test_rw(&self, now: u64) -> Result<usize, Error> {
+    pub fn test_rw(&self, now: u64) -> Result<isize, Error> {
         let pool = &self.pool.clone();
 
         // create table
         pool.prep_exec(
             r#"CREATE TABLE IF NOT EXISTS dbpulse_rw (
         id INT NOT NULL,
-        t1 INT(11) NOT NULL,
+        t1 INT(11) NOT NULL ,
         t2 timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        uuid CHAR(36) CHARACTER SET ascii,
+        UNIQUE KEY(uuid),
         PRIMARY KEY(id)) ENGINE=InnoDB"#,
             (),
         )?;
 
         // write into table
-        let mut stmt = pool.prepare(
-            "INSERT INTO dbpulse_rw (id, t1) VALUES (?, ?) ON DUPLICATE KEY UPDATE t1=?",
-        )?;
-
         let num = rand::thread_rng().gen_range(0, 100);
-        stmt.execute((num, now, now))?;
+        let uuid = Uuid::new_v4();
+        pool.prepare("INSERT INTO dbpulse_rw (id, t1, uuid) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE t1=?, uuid=?")?
+            .execute((num, now, uuid.to_string(), now, uuid.to_string()))?;
 
         // check if stored record matches
-        let mut stmt = pool.prepare("SELECT t1 FROM dbpulse_rw Where id=?")?;
-        let result = stmt.execute((num,))?.last().ok_or(Error::RowExpected)??;
-        let row = mysql::from_row_opt::<u64>(result)?;
-        if now != row {
-            return Err(Error::NotMatching(format!("{} != {}", now, row)));
+        let result = pool
+            .prepare("SELECT t1, uuid FROM dbpulse_rw Where id=?")?
+            .execute((num,))?
+            .last()
+            .ok_or(Error::RowExpected)??;
+        let (t1, v4) = mysql::from_row_opt::<(u64, String)>(result)?;
+        if now != t1 || uuid.to_string() != v4 {
+            return Err(Error::NotMatching(format!(
+                "({}, {}) != ({},{})",
+                now, uuid, t1, v4
+            )));
         }
 
         // check transaction setting all records to 0
@@ -86,8 +93,10 @@ impl Queries {
         tr.rollback()?;
 
         // update record 1 with now
-        pool.prepare("INSERT INTO dbpulse_rw (id, t1) VALUES (0, ?) ON DUPLICATE KEY UPDATE t1=?")?
-            .execute((now, now))?;
+        pool.prepare(
+            "INSERT INTO dbpulse_rw (id, t1, uuid) VALUES (0, ?, UUID()) ON DUPLICATE KEY UPDATE t1=?",
+        )?
+        .execute((now, now))?;
 
         // get elapsed time
         let row = pool
@@ -97,6 +106,6 @@ impl Queries {
             )?
             .last()
             .ok_or(Error::RowExpected)??;
-        Ok(mysql::from_row_opt::<usize>(row)?)
+        Ok(mysql::from_row_opt::<isize>(row)?)
     }
 }
