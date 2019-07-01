@@ -26,9 +26,9 @@ fn main() {
 
     let mut opts = mysql::OptsBuilder::from_opts(dsn);
     opts.stmt_cache_size(0);
-    opts.read_timeout(Some(Duration::new(3, 0)));
-    opts.write_timeout(Some(Duration::new(3, 0)));
-    let pool = mysql::Pool::new_manual(1, 5, opts).expect("Could not connect to MySQL");
+    opts.read_timeout(Some(Duration::new(5, 0)));
+    opts.write_timeout(Some(Duration::new(5, 0)));
+    let pool = mysql::Pool::new_manual(1, 2, opts).expect("Could not connect to MySQL");
 
     loop {
         let mut pulse = Pulse::default();
@@ -54,12 +54,19 @@ fn main() {
                     restart = true;
                 }
             },
+            Err(queries::Error::RowError(e)) => match e {
+                _ => {
+                    eprintln!("Error: {}", e);
+                    pulse.sql_error = true;
+                    restart = true;
+                }
+            },
             Err(queries::Error::NotMatching(e)) => {
                 eprintln!("NotMatching: {}", e);
                 pulse.data_error = true;
                 restart = true;
             }
-            Err(e @ queries::Error::NoRecords) => {
+            Err(e @ queries::Error::RowExpected) => {
                 eprintln!("{}", e);
                 pulse.data_error = true;
                 restart = false;
