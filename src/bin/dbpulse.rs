@@ -30,12 +30,11 @@ fn main() {
         .version(env!("CARGO_PKG_VERSION"))
         .get_matches();
 
-    let mut opts = mysql::OptsBuilder::from_opts(envs::get_env("DSN"));
-    opts.stmt_cache_size(0);
-    opts.read_timeout(Some(Duration::new(3, 0)));
-    opts.write_timeout(Some(Duration::new(3, 0)));
-    let pool = mysql::Pool::new_manual(1, 2, opts).expect("Could not connect to MySQL");
     let every: u64 = envs::get_env("EVERY").parse().unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        process::exit(1);
+    });
+    let rw_timeout: u64 = envs::get_env("RW_TIMEOUT").parse().unwrap_or_else(|e| {
         eprintln!("{}", e);
         process::exit(1);
     });
@@ -54,6 +53,13 @@ fn main() {
             });
     let mut threshold = Threshold::default();
     let mut skip_ok_alert: bool = true;
+
+    // create mysql pool
+    let mut opts = mysql::OptsBuilder::from_opts(envs::get_env("DSN"));
+    opts.stmt_cache_size(0);
+    opts.read_timeout(Some(Duration::new(rw_timeout, 0)));
+    opts.write_timeout(Some(Duration::new(rw_timeout, 0)));
+    let pool = mysql::Pool::new_manual(1, 2, opts).expect("Could not connect to MySQL");
 
     loop {
         let mut pulse = Pulse::default();
@@ -136,10 +142,10 @@ fn main() {
         if threshold.unhealthy == threshold_unhealthy {
             println!("threshold BAD: {}", threshold.unhealthy);
             if let Ok(rs) = q.get_user_time_state_info() {
-                let (user, time, state, info) = rs;
+                let (user, time, db, state, memory_usage) = rs;
                 slack::send_msg(format!(
-                    "user: {}, time: {}, state: {}, info: {}",
-                    user, time, state, info
+                    "user: {}, time: {}, db: {} state: {}, memory_usage: {}",
+                    user, time, db, state, memory_usage
                 ))
             }
         } else if threshold.healthy == threshold_healthy && !skip_ok_alert {

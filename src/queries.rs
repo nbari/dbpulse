@@ -115,14 +115,16 @@ impl Queries {
         Ok(())
     }
 
-    pub fn get_user_time_state_info(&self) -> Result<(String, i64, String, String), Error> {
+    pub fn get_user_time_state_info(&self) -> Result<(String, i64, String, String, i64), Error> {
         // to lock for writes
         // FLUSH TABLES WITH READ LOCK;
         let pool = &self.pool.clone();
-        let row= pool.prepare("SELECT user, time, state, info FROM information_schema.processlist WHERE command != 'Sleep' AND time >= ? ORDER BY time DESC, id LIMIT 1")?
+        let row= pool.prepare("SELECT user, time, db, state, memory_used FROM information_schema.processlist WHERE command != 'Sleep' AND time >= ? ORDER BY time DESC, id LIMIT 1")?
         .execute((5,))?
         .last()
         .ok_or(Error::RowExpected)??;
-        Ok(mysql::from_row_opt::<(String, i64, String, String)>(row)?)
+        Ok(mysql::from_row_opt::<(String, i64, String, String, i64)>(
+            row,
+        )?)
     }
 }
