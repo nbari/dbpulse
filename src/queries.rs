@@ -35,15 +35,15 @@ impl From<mysql::FromRowError> for Error {
     }
 }
 
-pub struct Queries {
-    pool: mysql::Pool,
+pub struct Queries<'a> {
+    pool: &'a mysql::Pool,
 }
 
-pub fn new(pool: mysql::Pool) -> Queries {
+pub fn new(pool: &mysql::Pool) -> Queries {
     return Queries { pool: pool };
 }
 
-impl Queries {
+impl<'a> Queries<'a> {
     pub fn test_rw(&self, now: u64) -> Result<isize, Error> {
         let pool = &self.pool;
 
