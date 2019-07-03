@@ -63,8 +63,7 @@ fn main() {
 
     loop {
         let mut pulse = Pulse::default();
-        let pool = pool.clone();
-        let q = queries::new(pool);
+        let q = queries::new(pool.clone());
         let start = Instant::now();
         let wait_time = Duration::from_secs(every);
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();

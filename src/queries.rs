@@ -45,7 +45,7 @@ pub fn new(pool: mysql::Pool) -> Queries {
 
 impl Queries {
     pub fn test_rw(&self, now: u64) -> Result<isize, Error> {
-        let pool = &self.pool.clone();
+        let pool = &self.pool;
 
         // create table
         pool.prep_exec(
@@ -110,16 +110,15 @@ impl Queries {
     }
 
     pub fn drop_table(&self) -> Result<(), Error> {
-        let pool = &self.pool.clone();
-        pool.prep_exec("DROP TABLE dbpulse_rw", ())?;
+        &self.pool.prep_exec("DROP TABLE dbpulse_rw", ())?;
         Ok(())
     }
 
     pub fn get_user_time_state_info(&self) -> Result<(String, i64, String, String, i64), Error> {
         // to lock for writes
         // FLUSH TABLES WITH READ LOCK;
-        let pool = &self.pool.clone();
-        let row= pool.prepare("SELECT user, time, db, state, memory_used FROM information_schema.processlist WHERE command != 'Sleep' AND info LIKE 'alter%' AND time >= ? ORDER BY time DESC, id LIMIT 1")?
+        let pool = &self.pool;
+        let row = pool.prepare("SELECT user, time, db, state, memory_used FROM information_schema.processlist WHERE command != 'Sleep' AND info LIKE 'alter%' AND time >= ? ORDER BY time DESC, id LIMIT 1")?
         .execute((5,))?
         .last()
         .ok_or(Error::RowExpected)??;
