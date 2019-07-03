@@ -119,7 +119,7 @@ impl Queries {
         // to lock for writes
         // FLUSH TABLES WITH READ LOCK;
         let pool = &self.pool.clone();
-        let row= pool.prepare("SELECT user, time, db, state, memory_used FROM information_schema.processlist WHERE command != 'Sleep' AND time >= ? ORDER BY time DESC, id LIMIT 1")?
+        let row= pool.prepare("SELECT user, time, db, state, memory_used FROM information_schema.processlist WHERE command != 'Sleep' AND info LIKE 'alter%' AND time >= ? ORDER BY time DESC, id LIMIT 1")?
         .execute((5,))?
         .last()
         .ok_or(Error::RowExpected)??;
