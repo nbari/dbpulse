@@ -45,10 +45,8 @@ pub fn new(pool: &mysql::Pool) -> Queries {
 
 impl<'a> Queries<'a> {
     pub fn test_rw(&self, now: u64) -> Result<isize, Error> {
-        let pool = &self.pool;
-
         // create table
-        pool.prep_exec(
+        self.pool.prep_exec(
             r#"CREATE TABLE IF NOT EXISTS dbpulse_rw (
         id INT NOT NULL,
         t1 INT(11) NOT NULL ,
@@ -62,11 +60,12 @@ impl<'a> Queries<'a> {
         // write into table
         let num = rand::thread_rng().gen_range(0, 100);
         let uuid = Uuid::new_v4();
-        pool.prepare("INSERT INTO dbpulse_rw (id, t1, uuid) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE t1=?, uuid=?")?
+        self.pool.prepare("INSERT INTO dbpulse_rw (id, t1, uuid) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE t1=?, uuid=?")?
             .execute((num, now, uuid.to_string(), now, uuid.to_string()))?;
 
         // check if stored record matches
-        let result = pool
+        let result = self
+            .pool
             .prepare("SELECT t1, uuid FROM dbpulse_rw Where id=?")?
             .execute((num,))?
             .last()
@@ -80,7 +79,7 @@ impl<'a> Queries<'a> {
         }
 
         // check transaction setting all records to 0
-        let mut tr = pool.start_transaction(false, None, None)?;
+        let mut tr = self.pool.start_transaction(false, None, None)?;
         tr.prep_exec("UPDATE dbpulse_rw SET t1=?", (0,))?;
         let rows = tr.prep_exec("SELECT t1 FROM dbpulse_rw", ())?;
         for row in rows {
@@ -93,13 +92,14 @@ impl<'a> Queries<'a> {
         tr.rollback()?;
 
         // update record 1 with now
-        pool.prepare(
+        self.pool.prepare(
             "INSERT INTO dbpulse_rw (id, t1, uuid) VALUES (0, ?, UUID()) ON DUPLICATE KEY UPDATE t1=?",
         )?
         .execute((now, now))?;
 
         // get elapsed time
-        let row = pool
+        let row = self
+            .pool
             .prep_exec(
                 "SELECT TIMESTAMPDIFF(SECOND, FROM_UNIXTIME(t1), t2) from dbpulse_rw where id=0",
                 (),
@@ -110,15 +110,14 @@ impl<'a> Queries<'a> {
     }
 
     pub fn drop_table(&self) -> Result<(), Error> {
-        &self.pool.prep_exec("DROP TABLE dbpulse_rw", ())?;
+        self.pool.prep_exec("DROP TABLE dbpulse_rw", ())?;
         Ok(())
     }
 
     pub fn get_user_time_state_info(&self) -> Result<(String, i64, String, String, i64), Error> {
         // to lock for writes
         // FLUSH TABLES WITH READ LOCK;
-        let pool = &self.pool;
-        let row = pool.prepare("SELECT user, time, db, state, memory_used FROM information_schema.processlist WHERE command != 'Sleep' AND info LIKE 'alter%' AND time >= ? ORDER BY time DESC, id LIMIT 1")?
+        let row = self.pool.prepare("SELECT user, time, db, state, memory_used FROM information_schema.processlist WHERE command != 'Sleep' AND info LIKE 'alter%' AND time >= ? ORDER BY time DESC, id LIMIT 1")?
         .execute((5,))?
         .last()
         .ok_or(Error::RowExpected)??;
