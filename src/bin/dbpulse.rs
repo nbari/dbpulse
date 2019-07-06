@@ -59,10 +59,11 @@ fn main() {
     opts.stmt_cache_size(0);
     opts.read_timeout(Some(Duration::new(rw_timeout, 0)));
     opts.write_timeout(Some(Duration::new(rw_timeout, 0)));
-    let pool = mysql::Pool::new_manual(1, 2, opts).expect("Could not connect to MySQL");
+    let opts: mysql::Opts = opts.into();
 
     loop {
         let mut pulse = Pulse::default();
+        let pool = mysql::Pool::new_manual(1, 2, opts.clone()).expect("Could not connect to MySQL");
         let q = queries::new(&pool);
         let start = Instant::now();
         let wait_time = Duration::from_secs(every);
