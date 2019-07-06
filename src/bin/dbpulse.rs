@@ -121,6 +121,7 @@ fn main() {
                 }
             }
         };
+        drop(q);
 
         let runtime = start.elapsed();
         pulse.runtime_ms = runtime.as_millis();
@@ -141,6 +142,9 @@ fn main() {
         // Alert onlye once
         if threshold.unhealthy == threshold_unhealthy {
             println!("threshold BAD: {}", threshold.unhealthy);
+            let pool =
+                mysql::Pool::new_manual(1, 3, opts.clone()).expect("Could not connect to MySQL");
+            let q = queries::new(pool);
             if let Ok(rs) = q.get_user_time_state_info() {
                 let (user, time, db, state, memory_usage) = rs;
                 slack::send_msg(format!(
