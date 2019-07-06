@@ -55,16 +55,13 @@ fn main() {
     let mut skip_ok_alert: bool = true;
 
     // create mysql pool
-    let mut opts = mysql::OptsBuilder::from_opts(envs::get_env("DSN"));
-    opts.stmt_cache_size(0);
-    opts.read_timeout(Some(Duration::new(rw_timeout, 0)));
-    opts.write_timeout(Some(Duration::new(rw_timeout, 0)));
-    let opts: mysql::Opts = opts.into();
+    let opts = pool_opts(rw_timeout).unwrap_or_else(|e| {
+        eprintln!("{}", e);
+        process::exit(1);
+    });
 
     loop {
         let mut pulse = Pulse::default();
-        let pool = mysql::Pool::new_manual(1, 2, opts.clone()).expect("Could not connect to MySQL");
-        let q = queries::new(&pool);
         let start = Instant::now();
         let wait_time = Duration::from_secs(every);
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -72,6 +69,9 @@ fn main() {
         // add start time
         pulse.time = now.as_nanos();
         pulse.name = envs::get_env("ENVIRONMENT");
+
+        let pool = mysql::Pool::new_manual(1, 3, opts.clone()).expect("Could not connect to MySQL");
+        let q = queries::new(pool);
 
         // test RW
         let mut restart: bool = false;
@@ -152,4 +152,13 @@ fn main() {
             println!("threshold OK: {}", threshold.healthy);
         }
     }
+}
+
+fn pool_opts(rw_timeout: u64) -> Result<mysql::Opts, mysql::error::Error> {
+    let mut opts = mysql::OptsBuilder::from_opts(envs::get_env("DSN"));
+    opts.stmt_cache_size(0);
+    opts.read_timeout(Some(Duration::new(rw_timeout, 0)));
+    opts.write_timeout(Some(Duration::new(rw_timeout, 0)));
+    let opts: mysql::Opts = opts.into();
+    Ok(opts.into())
 }
