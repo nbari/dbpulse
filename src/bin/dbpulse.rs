@@ -139,7 +139,7 @@ fn main() {
             }
         }
 
-        // Alert onlye once
+        // Alert only once
         if threshold.unhealthy == threshold_unhealthy {
             println!("threshold BAD: {}", threshold.unhealthy);
             let pool =
