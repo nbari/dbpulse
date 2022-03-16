@@ -1,3 +1,4 @@
+use chrono::prelude::*;
 use chrono::{Duration, Utc};
 use dbpulse::{options, queries};
 use lazy_static::lazy_static;
@@ -36,16 +37,16 @@ async fn main() {
         .register(Box::new(RUNTIME.clone()))
         .expect("collector can be registered");
 
-    let args = options::new().unwrap();
+    let (v46, port, interval, opts) = options::new();
 
-    //let now = Utc::now();
-    //println!(
-    //"{} - Listening on *:{}",
-    //now.to_rfc3339_opts(SecondsFormat::Secs, true),
-    //args.port.clone()
-    //);
+    let now = Utc::now();
+    println!(
+        "{} - Listening on *:{}",
+        now.to_rfc3339_opts(SecondsFormat::Secs, true),
+        port
+    );
 
-    let addr = if args.v46 {
+    let addr = if v46 {
         // tcp46 or fallback to tcp4
         match IpAddr::from_str("::0") {
             Ok(a) => a,
@@ -58,9 +59,9 @@ async fn main() {
     let metrics = warp::path("metrics").and(warp::get().and_then(metrics_handler));
 
     // check db pulse
-    task::spawn(async { run_loop(args.opts, args.interval).await });
+    task::spawn(async move { run_loop(opts, interval).await });
 
-    warp::serve(metrics).run((addr, 9300)).await;
+    warp::serve(metrics).run((addr, port)).await;
 }
 
 /// # Errors
