@@ -6,8 +6,8 @@
 dynamically test if the database is available mainly for writes, it exposes a
 `/metrics` endpoint the one can be used together with `Prometheus` and create
 alerts when the database is not available, this is to cover HALT/LOCK cases in
-Galera cluster in where a DDL could stale the whole cluster, flow-control kicks
-in and the database could not be receiving temporally `COMMITS`
+Galera clusters in where a `DDL` could stale the whole cluster or flow-control
+kicks in and the database could not be receiving `COMMITS/WRITE`.
 
 
 ## How to use it
