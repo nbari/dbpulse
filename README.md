@@ -1,3 +1,5 @@
+[![build](https://github.com/nbari/dbpulse/actions/workflows/build.yml/badge.svg)](https://github.com/nbari/dbpulse/actions/workflows/build.yml)
+
 # dbpulse
 
 `dbpulse` will run a set of queries in a defined interval, in order to
