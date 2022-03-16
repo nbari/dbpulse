@@ -13,7 +13,7 @@ struct Pulse {
 async fn main() {
     let args = options::new().unwrap();
 
-    println!("{:#?}", args.pool);
+    println!("{:#?}", args.opts);
 
     loop {
         let mut pulse = Pulse::default();
@@ -23,7 +23,7 @@ async fn main() {
         // add start time
         pulse.time = now.timestamp_nanos();
 
-        match queries::test_rw(args.pool.clone(), now).await {
+        match queries::test_rw(args.opts.clone(), now).await {
             Ok(rs) => println!("{:#?}", rs),
             Err(e) => {
                 eprintln!("{}", e);

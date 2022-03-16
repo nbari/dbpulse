@@ -5,9 +5,8 @@ use mysql_async::prelude::*;
 use rand::Rng;
 use uuid::Uuid;
 
-pub async fn test_rw(pool: mysql_async::Pool, now: DateTime<Utc>) -> Result<()> {
-    let mut conn = pool.get_conn().await?;
-    //    println!("{:#?}", conn);
+pub async fn test_rw(opts: mysql_async::OptsBuilder, now: DateTime<Utc>) -> Result<()> {
+    let mut conn = mysql_async::Conn::new(opts).await?;
 
     // create table
     r#"CREATE TABLE IF NOT EXISTS dbpulse_rw (
@@ -49,7 +48,9 @@ pub async fn test_rw(pool: mysql_async::Pool, now: DateTime<Utc>) -> Result<()> 
     }
 
     // check transaction setting all records to 0
-    let mut tx = conn.start_transaction(Default::default()).await?;
+    let mut tx = conn
+        .start_transaction(mysql_async::TxOpts::default())
+        .await?;
     tx.exec_drop(
         "UPDATE dbpulse_rw SET t1=:t1",
         params! {
@@ -70,7 +71,9 @@ pub async fn test_rw(pool: mysql_async::Pool, now: DateTime<Utc>) -> Result<()> 
     tx.rollback().await?;
 
     // update record 1 with now
-    let mut tx = conn.start_transaction(Default::default()).await?;
+    let mut tx = conn
+        .start_transaction(mysql_async::TxOpts::default())
+        .await?;
     tx.exec_drop(
             "INSERT INTO dbpulse_rw (id, t1, uuid) VALUES (0, :t1, UUID()) ON DUPLICATE KEY UPDATE t1=:t1",
             params!{
@@ -85,5 +88,5 @@ pub async fn test_rw(pool: mysql_async::Pool, now: DateTime<Utc>) -> Result<()> 
     }
 
     drop(conn);
-    Ok(pool.disconnect().await?)
+    Ok(())
 }
