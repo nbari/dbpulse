@@ -10,10 +10,10 @@ Set this grants to the MySQL user:
 
 Environment variables required:
 
-    DSN""
-    ENVIRONMENT=""
-    EVERY=30
-    RW_TIMEOUT=3
-    SLACK_WEBHOOK_URL=""
-    THRESHOLD_HEALTHY=2
-    THRESHOLD_UNHEALTHY=3
+    DSN
+
+Optional:
+
+    INTERVAL=30
+    TIMEOUT=3
+    PORT=9300
