@@ -2,12 +2,12 @@
 name = "dbpulse"
 version = "0.3.0"
 authors = ["Nicolas Embriz <nbari@tequila.io>"]
-description = "command line tool to monitor database performance"
+description = "command line tool to monitor that database is available for read & write"
 documentation = "https://github.com/nbari/dbpulse/blob/master/README.md"
 homepage = "https://github.com/nbari/dbpulse"
 repository = "https://github.com/nbari/dbpulse"
 readme = "README.md"
-keywords = ["mysql", "monitor", "healthcheck", "database", "alerts"]
+keywords = ["mysql", "monitor", "healthcheck", "database", "metrics"]
 categories = ["command-line-utilities", "command-line-interface"]
 license-file = "LICENSE"
 edition = "2018"
@@ -26,3 +26,12 @@ serde_json = "1.0"
 tokio = { version ="1", features = ["full"]}
 uuid = { version = "0.8", features = ["v4"] }
 warp = "0.3"
+
+[package.metadata.rpm]
+package = "dbpulse"
+
+[package.metadata.rpm.cargo]
+buildflags = ["--release"]
+
+[package.metadata.rpm.targets]
+dbpulse = { path = "/usr/bin/./src/bin/dbpulse" }

@@ -36,7 +36,7 @@ pub fn new() -> (bool, u16, i64, mysql_async::OptsBuilder) {
             Arg::new("port")
                 .default_value("9300")
                 .env("PORT")
-                .help("listening port")
+                .help("listening port for /metrics")
                 .long("port")
                 .short('p')
                 .takes_value(true)
