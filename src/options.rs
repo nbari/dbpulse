@@ -74,6 +74,14 @@ pub fn new() -> Result<Pulse> {
         process::exit(1);
     });
 
+    // mysql ssl options
+    let mut ssl_opts = None;
+    if let Some(tls) = dsn.params.get("tls") {
+        if *tls == "skip-verify" {
+            ssl_opts = Some(mysql_async::SslOpts::default().with_danger_accept_invalid_certs(true));
+        }
+    };
+
     let opts = mysql_async::OptsBuilder::default()
         .user(dsn.username)
         .pass(dsn.password)
@@ -81,14 +89,8 @@ pub fn new() -> Result<Pulse> {
         .ip_or_hostname(dsn.host.unwrap_or_else(|| String::from("127.0.0.1")))
         .tcp_port(dsn.port.unwrap_or(3306))
         .socket(dsn.socket)
-        .stmt_cache_size(0);
-
-    // mysql ssl options
-    if let Some(tls) = dsn.params.get("tls") {
-        if *tls == "skip-verify" {
-            mysql_async::SslOpts::default().with_danger_accept_invalid_certs(true);
-        }
-    }
+        .stmt_cache_size(0)
+        .ssl_opts(ssl_opts);
 
     let port = matches
         .value_of("port")

@@ -5,7 +5,7 @@ use mysql_async::prelude::*;
 use rand::Rng;
 use uuid::Uuid;
 
-pub async fn test_rw(opts: mysql_async::OptsBuilder, now: DateTime<Utc>) -> Result<()> {
+pub async fn test_rw(opts: mysql_async::OptsBuilder, now: DateTime<Utc>) -> Result<String> {
     let mut conn = mysql_async::Conn::new(opts).await?;
 
     // create table
@@ -87,6 +87,9 @@ pub async fn test_rw(opts: mysql_async::OptsBuilder, now: DateTime<Utc>) -> Resu
         conn.query_drop("DROP TABLE dbpulse_rw").await?;
     }
 
+    // get db version
+    let version: Option<String> = conn.query_first("SELECT VERSION()").await?;
     drop(conn);
-    Ok(())
+
+    Ok(version.context("Expected version")?)
 }
