@@ -9,18 +9,9 @@ fn is_num(s: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Debug)]
-pub struct Pulse {
-    pub v46: bool,
-    pub port: u16,
-    pub interval: i64,
-    pub timeout: u16,
-    pub opts: mysql_async::OptsBuilder,
-}
-
 #[must_use]
-// returns (v46, port, pool)
-pub fn new() -> Result<Pulse> {
+// returns (v46, port, interval, opts)
+pub fn new() -> (bool, u16, i64, mysql_async::OptsBuilder) {
     let matches = Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
         .arg(
@@ -38,15 +29,6 @@ pub fn new() -> Result<Pulse> {
                 .help("number of seconds between checks")
                 .long("interval")
                 .short('i')
-                .takes_value(true)
-                .validator(is_num),
-        )
-        .arg(
-            Arg::new("timeout")
-                .default_value("3")
-                .env("TIMEOUT")
-                .help("read & write timeout")
-                .long("timeout")
                 .takes_value(true)
                 .validator(is_num),
         )
@@ -104,17 +86,5 @@ pub fn new() -> Result<Pulse> {
         .parse::<i64>()
         .unwrap_or(30);
 
-    let timeout = matches
-        .value_of("timeout")
-        .unwrap()
-        .parse::<u16>()
-        .unwrap_or(3);
-
-    Ok(Pulse {
-        v46: matches.is_present("v46"),
-        port,
-        interval,
-        timeout,
-        opts,
-    })
+    (matches.is_present("v46"), port, interval, opts)
 }
