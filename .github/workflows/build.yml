@@ -1,0 +1,29 @@
+name: build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+    with:
+      branch: main
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: build
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - run: cargo build --release --locked
