@@ -82,7 +82,7 @@ pub async fn test_rw(opts: mysql_async::OptsBuilder, now: DateTime<Utc>) -> Resu
         ).await?;
     tx.commit().await?;
 
-    // drop table
+    // drop table randomly
     if now.minute() == num {
         conn.query_drop("DROP TABLE dbpulse_rw").await?;
     }
