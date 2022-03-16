@@ -14,8 +14,8 @@ pub struct Pulse {
     pub v46: bool,
     pub port: u16,
     pub interval: i64,
-    pub pool: mysql_async::Pool,
     pub timeout: u16,
+    pub opts: mysql_async::OptsBuilder,
 }
 
 #[must_use]
@@ -80,10 +80,6 @@ pub fn new() -> Result<Pulse> {
         .db_name(dsn.database)
         .ip_or_hostname(dsn.host.unwrap_or_else(|| String::from("127.0.0.1")))
         .tcp_port(dsn.port.unwrap_or(3306))
-        .pool_opts(
-            mysql_async::PoolOpts::default()
-                .with_constraints(mysql_async::PoolConstraints::new(1, 1).unwrap()),
-        )
         .socket(dsn.socket)
         .stmt_cache_size(0);
 
@@ -114,9 +110,9 @@ pub fn new() -> Result<Pulse> {
 
     Ok(Pulse {
         v46: matches.is_present("v46"),
-        port: port,
+        port,
         interval,
-        pool: mysql_async::Pool::new(opts),
         timeout,
+        opts,
     })
 }
