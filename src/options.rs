@@ -1,31 +1,42 @@
-use clap::{Arg, Command};
-use std::process;
+use clap::{
+    builder::styling::{AnsiColor, Effects, Styles},
+    Arg, ColorChoice, Command,
+};
 
 #[must_use]
 // returns (v46, port, interval, opts)
-pub fn new() -> (bool, u16, i64, mysql_async::OptsBuilder) {
-    let matches = Command::new(env!("CARGO_PKG_NAME"))
+pub fn new() -> Command {
+    let styles = Styles::styled()
+        .header(AnsiColor::Yellow.on_default() | Effects::BOLD)
+        .usage(AnsiColor::Green.on_default() | Effects::BOLD)
+        .literal(AnsiColor::Blue.on_default() | Effects::BOLD)
+        .placeholder(AnsiColor::Green.on_default());
+
+    Command::new(env!("CARGO_PKG_NAME"))
+        .about(env!("CARGO_PKG_DESCRIPTION"))
         .version(env!("CARGO_PKG_VERSION"))
+        .color(ColorChoice::Auto)
+        .styles(styles)
         .arg(
             Arg::new("dsn")
-                .env("DSN")
-                .help("mysql://<username>:<password>@tcp(<host>:<port>)/<database>")
+                .env("DBPULSE_DSN")
+                .help("<mysql|postgres>://<username>:<password>@tcp(<host>:<port>)/<database>")
                 .long("dsn")
                 .required(true),
         )
         .arg(
             Arg::new("interval")
                 .default_value("30")
-                .env("INTERVAL")
+                .env("DBPULSE_INTERVAL")
                 .help("number of seconds between checks")
                 .long("interval")
                 .short('i')
-                .value_parser(clap::value_parser!(i64)),
+                .value_parser(clap::value_parser!(u16)),
         )
         .arg(
             Arg::new("port")
                 .default_value("9300")
-                .env("PORT")
+                .env("DBPULSE_PORT")
                 .help("listening port for /metrics")
                 .long("port")
                 .short('p')
@@ -34,10 +45,78 @@ pub fn new() -> (bool, u16, i64, mysql_async::OptsBuilder) {
         .arg(
             Arg::new("v46")
                 .help("listen in both IPv4 and IPv6")
-                .long("46"),
+                .long("46")
+                .number_of_values(0),
         )
-        .get_matches();
+}
 
+#[cfg(test)]
+mod tests {
+    mod new {
+        use super::super::new;
+
+        #[test]
+        fn test_new() {
+            let cmd = new();
+            assert_eq!(cmd.get_name(), "dbpulse");
+            assert_eq!(
+                cmd.get_about().unwrap().to_string(),
+                env!("CARGO_PKG_DESCRIPTION")
+            );
+            assert_eq!(
+                cmd.get_version().unwrap().to_string(),
+                env!("CARGO_PKG_VERSION")
+            );
+        }
+
+        #[test]
+        fn test_new_no_args() {
+            let cmd = new();
+            let matches = cmd.try_get_matches_from(vec!["dbpulse"]);
+            assert!(matches.is_err());
+        }
+
+        #[test]
+        fn test_new_args_mysql() {
+            let cmd = new();
+            let matches = cmd.try_get_matches_from(vec![
+                "dbpulse",
+                "--dsn",
+                "mysql://user:pass@localhost/db",
+            ]);
+            assert!(matches.is_ok());
+
+            let m = matches.unwrap();
+            assert_eq!(
+                m.get_one("dsn"),
+                Some(&String::from("mysql://user:pass@localhost/db"))
+            );
+            assert_eq!(m.get_one::<u16>("interval").copied(), Some(30));
+            assert_eq!(m.get_one::<u16>("port").copied(), Some(9300));
+        }
+
+        #[test]
+        fn test_new_args_postgres() {
+            let cmd = new();
+            let matches = cmd.try_get_matches_from(vec![
+                "dbpulse",
+                "--dsn",
+                "postgres://user:pass@localhost/db",
+            ]);
+            assert!(matches.is_ok());
+
+            let m = matches.unwrap();
+            assert_eq!(
+                m.get_one("dsn"),
+                Some(&String::from("postgres://user:pass@localhost/db"))
+            );
+            assert_eq!(m.get_one::<u16>("interval").copied(), Some(30));
+            assert_eq!(m.get_one::<u16>("port").copied(), Some(9300));
+        }
+    }
+}
+
+/*
     // prepare DSN for the mysql pool
     let dsn = matches
         .get_one("dsn")
@@ -75,3 +154,4 @@ pub fn new() -> (bool, u16, i64, mysql_async::OptsBuilder) {
 
     (matches.contains_id("v46"), port, interval, opts)
 }
+*/

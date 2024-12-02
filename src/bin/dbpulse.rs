@@ -37,28 +37,30 @@ async fn main() {
         .register(Box::new(RUNTIME.clone()))
         .expect("collector can be registered");
 
-    let (v46, port, interval, opts) = options::new();
+    todo!();
 
-    let now = Utc::now();
-    println!(
-        "{} - Listening on *:{}",
-        now.to_rfc3339_opts(SecondsFormat::Secs, true),
-        port
-    );
-
-    let addr = if v46 {
-        // tcp46 or fallback to tcp4
-        IpAddr::from_str("::0").unwrap_or_else(|_| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))
-    } else {
-        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
-    };
-
-    let metrics = warp::path("metrics").and(warp::get().and_then(metrics_handler));
-
-    // check db pulse
-    task::spawn(async move { run_loop(opts, interval).await });
-
-    warp::serve(metrics).run((addr, port)).await;
+    // let (v46, port, interval, opts) = options::new();
+    //
+    // let now = Utc::now();
+    // println!(
+    //     "{} - Listening on *:{}",
+    //     now.to_rfc3339_opts(SecondsFormat::Secs, true),
+    //     port
+    // );
+    //
+    // let addr = if v46 {
+    //     // tcp46 or fallback to tcp4
+    //     IpAddr::from_str("::0").unwrap_or_else(|_| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))
+    // } else {
+    //     IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
+    // };
+    //
+    // let metrics = warp::path("metrics").and(warp::get().and_then(metrics_handler));
+    //
+    // // check db pulse
+    // task::spawn(async move { run_loop(opts, interval).await });
+    //
+    // warp::serve(metrics).run((addr, port)).await;
 }
 
 /// # Errors
