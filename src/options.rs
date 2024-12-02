@@ -1,13 +1,5 @@
-use anyhow::Result;
 use clap::{Arg, Command};
 use std::process;
-
-fn is_num(s: &str) -> Result<(), String> {
-    if let Err(..) = s.parse::<usize>() {
-        return Err(String::from("Not a valid number!"));
-    }
-    Ok(())
-}
 
 #[must_use]
 // returns (v46, port, interval, opts)
@@ -19,7 +11,6 @@ pub fn new() -> (bool, u16, i64, mysql_async::OptsBuilder) {
                 .env("DSN")
                 .help("mysql://<username>:<password>@tcp(<host>:<port>)/<database>")
                 .long("dsn")
-                .takes_value(true)
                 .required(true),
         )
         .arg(
@@ -29,8 +20,7 @@ pub fn new() -> (bool, u16, i64, mysql_async::OptsBuilder) {
                 .help("number of seconds between checks")
                 .long("interval")
                 .short('i')
-                .takes_value(true)
-                .validator(is_num),
+                .value_parser(clap::value_parser!(i64)),
         )
         .arg(
             Arg::new("port")
@@ -39,8 +29,7 @@ pub fn new() -> (bool, u16, i64, mysql_async::OptsBuilder) {
                 .help("listening port for /metrics")
                 .long("port")
                 .short('p')
-                .takes_value(true)
-                .validator(is_num),
+                .value_parser(clap::value_parser!(u16)),
         )
         .arg(
             Arg::new("v46")
@@ -50,7 +39,13 @@ pub fn new() -> (bool, u16, i64, mysql_async::OptsBuilder) {
         .get_matches();
 
     // prepare DSN for the mysql pool
-    let dsn = matches.value_of("dsn").unwrap_or_default();
+    let dsn = matches
+        .get_one("dsn")
+        .map(|s: &String| s)
+        .unwrap_or_else(|| {
+            eprintln!("DSN is required");
+            process::exit(1);
+        });
     let dsn = dsn::parse(dsn).unwrap_or_else(|e| {
         eprintln!("{}", e);
         process::exit(1);
@@ -74,17 +69,9 @@ pub fn new() -> (bool, u16, i64, mysql_async::OptsBuilder) {
         .stmt_cache_size(0)
         .ssl_opts(ssl_opts);
 
-    let port = matches
-        .value_of("port")
-        .unwrap()
-        .parse::<u16>()
-        .unwrap_or(9200);
+    let port = matches.get_one::<u16>("port").copied().unwrap_or(9200);
 
-    let interval = matches
-        .value_of("interval")
-        .unwrap()
-        .parse::<i64>()
-        .unwrap_or(30);
+    let interval = matches.get_one::<i64>("interval").copied().unwrap_or(30);
 
-    (matches.is_present("v46"), port, interval, opts)
+    (matches.contains_id("v46"), port, interval, opts)
 }

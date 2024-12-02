@@ -48,10 +48,7 @@ async fn main() {
 
     let addr = if v46 {
         // tcp46 or fallback to tcp4
-        match IpAddr::from_str("::0") {
-            Ok(a) => a,
-            Err(_) => IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-        }
+        IpAddr::from_str("::0").unwrap_or_else(|_| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))
     } else {
         IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
     };
