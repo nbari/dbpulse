@@ -21,7 +21,7 @@ pub async fn test_rw(opts: mysql_async::OptsBuilder, now: DateTime<Utc>) -> Resu
         .await?;
 
     // write into table
-    let num: u32 = rand::thread_rng().gen_range(0, 100);
+    let num: u32 = rand::thread_rng().gen_range(0..100);
     let uuid = Uuid::new_v4();
     conn.exec_drop("INSERT INTO dbpulse_rw (id, t1, uuid) VALUES (:id, :t1, :uuid) ON DUPLICATE KEY UPDATE t1=:t1, uuid=:uuid", params! {
         "id" => num,
@@ -91,5 +91,5 @@ pub async fn test_rw(opts: mysql_async::OptsBuilder, now: DateTime<Utc>) -> Resu
     let version: Option<String> = conn.query_first("SELECT VERSION()").await?;
     drop(conn);
 
-    Ok(version.context("Expected version")?)
+    version.context("Expected version")
 }
