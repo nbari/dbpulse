@@ -22,6 +22,7 @@ pub fn new() -> Command {
                 .env("DBPULSE_DSN")
                 .help("<mysql|postgres>://<username>:<password>@tcp(<host>:<port>)/<database>")
                 .long("dsn")
+                .short('d')
                 .required(true),
         )
         .arg(
@@ -41,12 +42,6 @@ pub fn new() -> Command {
                 .long("port")
                 .short('p')
                 .value_parser(clap::value_parser!(u16)),
-        )
-        .arg(
-            Arg::new("v46")
-                .help("listen in both IPv4 and IPv6")
-                .long("46")
-                .number_of_values(0),
         )
 }
 

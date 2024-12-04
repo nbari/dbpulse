@@ -1,13 +1,12 @@
+use anyhow::Result;
+use axum::{http::StatusCode, response::IntoResponse, routing::get, Router};
 use chrono::prelude::*;
 use chrono::{Duration, Utc};
 use dbpulse::{options, queries};
 use lazy_static::lazy_static;
 use prometheus::{Encoder, Histogram, HistogramOpts, IntGauge, Registry};
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, Ipv4Addr};
-use std::str::FromStr;
-use tokio::{task, time};
-use warp::{Filter, Rejection, Reply};
+use tokio::{net::TcpListener, task, time};
 
 lazy_static! {
     static ref REGISTRY: Registry = Registry::new();
@@ -28,7 +27,7 @@ struct Pulse {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     REGISTRY
         .register(Box::new(PULSE.clone()))
         .expect("collector can be registered");
@@ -37,63 +36,73 @@ async fn main() {
         .register(Box::new(RUNTIME.clone()))
         .expect("collector can be registered");
 
-    todo!();
+    let matches = options::new().get_matches();
 
-    // let (v46, port, interval, opts) = options::new();
-    //
-    // let now = Utc::now();
-    // println!(
-    //     "{} - Listening on *:{}",
-    //     now.to_rfc3339_opts(SecondsFormat::Secs, true),
-    //     port
-    // );
-    //
-    // let addr = if v46 {
-    //     // tcp46 or fallback to tcp4
-    //     IpAddr::from_str("::0").unwrap_or_else(|_| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)))
-    // } else {
-    //     IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
-    // };
-    //
-    // let metrics = warp::path("metrics").and(warp::get().and_then(metrics_handler));
-    //
-    // // check db pulse
-    // task::spawn(async move { run_loop(opts, interval).await });
-    //
-    // warp::serve(metrics).run((addr, port)).await;
+    let dsn = matches
+        .get_one("dsn")
+        .map(|s: &String| s)
+        .unwrap_or_else(|| {
+            eprintln!("DSN is required");
+            std::process::exit(1);
+        });
+    let dsn = dsn::parse(dsn)?;
+    println!("DSN: {:?}", dsn);
+
+    let interval = matches.get_one::<u16>("interval").copied().unwrap_or(30);
+
+    let port = matches.get_one::<u16>("port").copied().unwrap_or(9300);
+
+    let app = Router::new().route("/metrics", get(metrics_handler));
+
+    let listener = TcpListener::bind(format!("::0:{port}")).await?;
+
+    let now = Utc::now();
+    println!(
+        "{} - Listening on *:{}, interval: {}",
+        now.to_rfc3339_opts(SecondsFormat::Secs, true),
+        port,
+        interval
+    );
+
+    // check db pulse
+    task::spawn(async move { run_loop(dsn, interval).await });
+
+    axum::serve(listener, app.into_make_service()).await?;
+
+    Ok(())
 }
 
 /// # Errors
 /// return Err if can't encode
-pub async fn metrics_handler() -> Result<impl Reply, Rejection> {
+pub async fn metrics_handler() -> impl IntoResponse {
     let mut buffer = Vec::new();
     let encoder = prometheus::TextEncoder::new();
     if let Err(e) = encoder.encode(&REGISTRY.gather(), &mut buffer) {
         eprintln!("could not encode custom metrics: {}", e);
     };
-    Ok(buffer)
+    (StatusCode::OK, buffer)
 }
 
-pub async fn run_loop(opts: mysql_async::OptsBuilder, every: i64) {
+pub async fn run_loop(dsn: dsn::DSN, every: u16) {
     loop {
         let mut pulse = Pulse::default();
         let now = Utc::now();
-        let wait_time = Duration::seconds(every);
+        let wait_time = Duration::seconds(every.into());
 
         // add start time
         pulse.time = now.to_rfc3339();
 
         let timer = RUNTIME.start_timer();
-        match queries::test_rw(opts.clone(), now).await {
-            Ok(rs) => {
-                pulse.version = rs;
-                PULSE.set(1)
-            }
-            Err(e) => {
-                PULSE.set(0);
-                eprintln!("{}", e);
-            }
-        }
+        // match queries::test_rw(opts.clone(), now).await {
+        //     Ok(rs) => {
+        //         pulse.version = rs;
+        //         PULSE.set(1)
+        //     }
+        //     Err(e) => {
+        //         PULSE.set(0);
+        //         eprintln!("{}", e);
+        //     }
+        // }
         timer.observe_duration();
 
         let runtime = Utc::now().time() - now.time();
