@@ -2,11 +2,15 @@ use anyhow::Result;
 use axum::{http::StatusCode, response::IntoResponse, routing::get, Router};
 use chrono::prelude::*;
 use chrono::{Duration, Utc};
-use dbpulse::{options, queries};
+use dbpulse::{
+    options,
+    queries::{mysql, postgres},
+};
+use dsn::{self, DSN};
 use lazy_static::lazy_static;
 use prometheus::{Encoder, Histogram, HistogramOpts, IntGauge, Registry};
 use serde::{Deserialize, Serialize};
-use tokio::{net::TcpListener, task, time};
+use tokio::{net::TcpListener, sync::mpsc, task, time};
 
 lazy_static! {
     static ref REGISTRY: Registry = Registry::new();
@@ -64,10 +68,17 @@ async fn main() -> Result<()> {
         interval
     );
 
-    // check db pulse
-    task::spawn(async move { run_loop(dsn, interval).await });
+    // shutdown signal
+    let (tx, mut rx) = mpsc::unbounded_channel();
 
-    axum::serve(listener, app.into_make_service()).await?;
+    // check db pulse
+    task::spawn(async move { run_loop(dsn, interval, tx).await });
+
+    axum::serve(listener, app.into_make_service())
+        .with_graceful_shutdown(async move {
+            rx.recv().await;
+        })
+        .await?;
 
     Ok(())
 }
@@ -83,7 +94,7 @@ pub async fn metrics_handler() -> impl IntoResponse {
     (StatusCode::OK, buffer)
 }
 
-pub async fn run_loop(dsn: dsn::DSN, every: u16) {
+pub async fn run_loop(dsn: DSN, every: u16, tx: mpsc::UnboundedSender<()>) {
     loop {
         let mut pulse = Pulse::default();
         let now = Utc::now();
@@ -93,16 +104,35 @@ pub async fn run_loop(dsn: dsn::DSN, every: u16) {
         pulse.time = now.to_rfc3339();
 
         let timer = RUNTIME.start_timer();
-        // match queries::test_rw(opts.clone(), now).await {
-        //     Ok(rs) => {
-        //         pulse.version = rs;
-        //         PULSE.set(1)
-        //     }
-        //     Err(e) => {
-        //         PULSE.set(0);
-        //         eprintln!("{}", e);
-        //     }
-        // }
+
+        match dsn.driver.as_str() {
+            "postgres" | "postgresql" => match postgres::test_rw(&dsn, now).await {
+                Ok(rs) => {
+                    pulse.version = rs;
+                    PULSE.set(1)
+                }
+                Err(e) => {
+                    PULSE.set(0);
+                    eprintln!("{}", e);
+                }
+            },
+            "mysql" => match mysql::test_rw(&dsn, now).await {
+                Ok(rs) => {
+                    pulse.version = rs;
+                    PULSE.set(1)
+                }
+                Err(e) => {
+                    PULSE.set(0);
+                    eprintln!("{}", e);
+                }
+            },
+            _ => {
+                eprintln!("unsupported driver");
+                let _ = tx.send(());
+                return;
+            }
+        }
+
         timer.observe_duration();
 
         let runtime = Utc::now().time() - now.time();

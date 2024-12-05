@@ -32,7 +32,6 @@ USAGE:
     dbpulse [OPTIONS] --dsn <dsn>
 
 OPTIONS:
-        --46                     listen in both IPv4 and IPv6
         --dsn <dsn>              mysql://<username>:<password>@tcp(<host>:<port>)/<database> [env: DSN=]
     -h, --help                   Print help information
     -i, --interval <interval>    number of seconds between checks [env: INTERVAL=] [default: 30]

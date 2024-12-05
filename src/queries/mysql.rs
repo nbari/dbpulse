@@ -1,11 +1,15 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::prelude::*;
 use chrono::{DateTime, Utc};
+use dsn::DSN;
 use mysql_async::prelude::*;
 use rand::Rng;
 use uuid::Uuid;
 
-pub async fn test_rw(opts: mysql_async::OptsBuilder, now: DateTime<Utc>) -> Result<String> {
+pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>) -> Result<String> {
+    todo!();
+
+    /*
     let mut conn = mysql_async::Conn::new(opts).await?;
 
     // create table
@@ -92,4 +96,6 @@ pub async fn test_rw(opts: mysql_async::OptsBuilder, now: DateTime<Utc>) -> Resu
     drop(conn);
 
     version.context("Expected version")
+        */
+    Ok("".to_string())
 }
