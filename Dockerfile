@@ -11,7 +11,7 @@ WORKDIR /app
 
 RUN git clone --branch develop https://github.com/nbari/dbpulse.git .
 
-RUN cargo build --release --locked --features "openssl/vendored"
+RUN cargo build --release --locked
 
 FROM rust:latest
 
