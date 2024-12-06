@@ -57,12 +57,17 @@ async fn main() -> Result<()> {
 
     let app = Router::new().route("/metrics", get(metrics_handler));
 
-    let listener = TcpListener::bind(format!("::0:{port}")).await?;
+    let listener = match TcpListener::bind(format!("::0:{port}")).await {
+        Ok(l) => l,
+        Err(_) => {
+            // If IPv6 fails, fall back to binding to IPv4 address
+            TcpListener::bind(format!("0.0.0.0:{port}")).await?
+        }
+    };
 
-    let now = Utc::now();
     println!(
         "{} - Listening on *:{}, interval: {}",
-        now.to_rfc3339_opts(SecondsFormat::Secs, true),
+        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
         port,
         interval
     );

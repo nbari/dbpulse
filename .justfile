@@ -19,4 +19,7 @@ mariadb:
   -d mariadb:latest
 
 build:
-  podman build -t dbpulse .
+  docker build -t dbpulse .
+
+rpm: build
+  mkdir rpm; docker run -it --rm -v ./rpm:/host dbpulse
