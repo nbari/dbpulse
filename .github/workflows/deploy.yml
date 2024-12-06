@@ -30,10 +30,6 @@ jobs:
             os: macos-latest
             target: x86_64-apple-darwin
 
-          - build: windows
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,18 +42,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - run: sudo apt -y install musl-dev musl-tools
-        if: matrix.build == 'linux'
-
-      - name: Build Linux
-        run: |
-          cargo build --release --locked --target ${{ matrix.target }} --features "openssl/vendored"
-        if: matrix.build == 'linux'
-
       - name: Build
         run: |
           cargo build --release --locked --target ${{ matrix.target }}
-        if: matrix.build != 'linux'
 
       - name: Build archive
         shell: bash

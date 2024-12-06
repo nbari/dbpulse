@@ -52,12 +52,6 @@ jobs:
       - run: sudo apt -y install musl-dev musl-tools
         if: matrix.build == 'linux'
 
-      - name: Build Linux
-        run: |
-          cargo build --release --locked --target ${{ matrix.target }} --features "openssl/vendored"
-        if: matrix.build == 'linux'
-
       - name: Build
-        run: |
+        run: |-
           cargo build --release --locked --target ${{ matrix.target }}
-        if: matrix.build != 'linux'
