@@ -28,7 +28,6 @@ sqlx = { version = "0.8.2", features = ["mysql", "postgres", "runtime-tokio", "u
 tokio = { version ="1", features = ["full"]}
 uuid = { version = "1.11", features = ["v4"] }
 
-
 [package.metadata.generate-rpm]
 assets = [
     { source = "target/release/dbpulse", dest = "/usr/bin/dbpulse", mode = "0755" },
