@@ -53,6 +53,8 @@ async fn main() -> Result<()> {
 
     let interval = matches.get_one::<u16>("interval").copied().unwrap_or(30);
 
+    let range = matches.get_one::<u32>("range").copied().unwrap_or(100);
+
     let port = matches.get_one::<u16>("port").copied().unwrap_or(9300);
 
     let app = Router::new().route("/metrics", get(metrics_handler));
@@ -76,7 +78,7 @@ async fn main() -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
 
     // check db pulse
-    task::spawn(async move { run_loop(dsn, interval, tx).await });
+    task::spawn(async move { run_loop(dsn, interval, range, tx).await });
 
     axum::serve(listener, app.into_make_service())
         .with_graceful_shutdown(async move {
@@ -98,7 +100,7 @@ pub async fn metrics_handler() -> impl IntoResponse {
     (StatusCode::OK, buffer)
 }
 
-pub async fn run_loop(dsn: DSN, every: u16, tx: mpsc::UnboundedSender<()>) {
+pub async fn run_loop(dsn: DSN, every: u16, range: u32, tx: mpsc::UnboundedSender<()>) {
     loop {
         let mut pulse = Pulse::default();
         let now = Utc::now();
@@ -110,7 +112,7 @@ pub async fn run_loop(dsn: DSN, every: u16, tx: mpsc::UnboundedSender<()>) {
         let timer = RUNTIME.start_timer();
 
         match dsn.driver.as_str() {
-            "postgres" | "postgresql" => match postgres::test_rw(&dsn, now).await {
+            "postgres" | "postgresql" => match postgres::test_rw(&dsn, now, range).await {
                 Ok(rs) => {
                     pulse.version = rs;
                     PULSE.set(1)
@@ -120,7 +122,7 @@ pub async fn run_loop(dsn: DSN, every: u16, tx: mpsc::UnboundedSender<()>) {
                     eprintln!("{}", e);
                 }
             },
-            "mysql" => match mysql::test_rw(&dsn, now).await {
+            "mysql" => match mysql::test_rw(&dsn, now, range).await {
                 Ok(rs) => {
                     pulse.version = rs;
                     PULSE.set(1)

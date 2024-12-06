@@ -6,7 +6,7 @@ use rand::Rng;
 use sqlx::{mysql::MySqlConnectOptions, ConnectOptions, Connection, Executor};
 use uuid::Uuid;
 
-pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>) -> Result<String> {
+pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String> {
     let mut options = MySqlConnectOptions::new()
         .username(dsn.username.clone().unwrap_or_default().as_ref())
         .password(dsn.password.clone().unwrap_or_default().as_str())
@@ -35,7 +35,7 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>) -> Result<String> {
     conn.execute(create_table_sql).await?;
 
     // write into table
-    let id: u32 = rand::thread_rng().gen_range(0..100);
+    let id: u32 = rand::thread_rng().gen_range(0..range);
     let uuid = Uuid::new_v4();
 
     // SQL Query

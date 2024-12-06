@@ -43,6 +43,16 @@ pub fn new() -> Command {
                 .short('p')
                 .value_parser(clap::value_parser!(u16)),
         )
+        .arg(
+            Arg::new("range")
+                .default_value("9300")
+                .env("DBPULSE_RANGE")
+                .help("The upper limit of the ID range")
+                .long("range")
+                .short('r')
+                .default_value("100")
+                .value_parser(clap::value_parser!(u32)),
+        )
 }
 
 #[cfg(test)]
@@ -107,6 +117,22 @@ mod tests {
             );
             assert_eq!(m.get_one::<u16>("interval").copied(), Some(30));
             assert_eq!(m.get_one::<u16>("port").copied(), Some(9300));
+        }
+
+        #[test]
+        fn test_new_arga_range() {
+            let cmd = new();
+            let matches = cmd.try_get_matches_from(vec![
+                "dbpulse",
+                "--dsn",
+                "postgres://user:pass@localhost/db",
+                "--range",
+                "1000",
+            ]);
+            assert!(matches.is_ok());
+
+            let m = matches.unwrap();
+            assert_eq!(m.get_one::<i32>("range").copied(), Some(1000));
         }
     }
 }
