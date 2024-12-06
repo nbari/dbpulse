@@ -9,7 +9,7 @@ repository = "https://github.com/nbari/dbpulse"
 readme = "README.md"
 keywords = ["mysql", "monitor", "healthcheck", "database", "metrics"]
 categories = ["command-line-utilities", "command-line-interface"]
-license-file = "LICENSE"
+license = "BSD-3-Clause"
 edition = "2021"
 
 [dependencies]
@@ -19,6 +19,7 @@ chrono = "0.4"
 clap = { version = "4.5", features = ["env"]}
 dsn = "1"
 lazy_static = "1.5.0"
+openssl = { version = "0.10", optional = true, features = ["vendored"] }
 prometheus = { version = "0.13", features = ["process"] }
 rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }
@@ -27,11 +28,8 @@ sqlx = { version = "0.8.2", features = ["mysql", "postgres", "runtime-tokio", "u
 tokio = { version ="1", features = ["full"]}
 uuid = { version = "1.11", features = ["v4"] }
 
-[package.metadata.rpm]
-package = "dbpulse"
 
-[package.metadata.rpm.cargo]
-buildflags = ["--release"]
-
-[package.metadata.rpm.targets]
-dbpulse = { path = "/usr/bin/./src/bin/dbpulse" }
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/dbpulse", dest = "/usr/bin/dbpulse", mode = "0755" },
+]
