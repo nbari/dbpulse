@@ -120,7 +120,7 @@ mod tests {
         }
 
         #[test]
-        fn test_new_arga_range() {
+        fn test_new_args_range() {
             let cmd = new();
             let matches = cmd.try_get_matches_from(vec![
                 "dbpulse",
@@ -132,7 +132,7 @@ mod tests {
             assert!(matches.is_ok());
 
             let m = matches.unwrap();
-            assert_eq!(m.get_one::<i32>("range").copied(), Some(1000));
+            assert_eq!(m.get_one::<u32>("range").copied(), Some(1000));
         }
     }
 }
