@@ -6,7 +6,7 @@ use rand::Rng;
 use sqlx::{postgres::PgConnectOptions, ConnectOptions, Connection};
 use uuid::Uuid;
 
-pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>) -> Result<String> {
+pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String> {
     let mut options = PgConnectOptions::new()
         .username(dsn.username.clone().unwrap_or_default().as_ref())
         .password(dsn.password.clone().unwrap_or_default().as_str())
@@ -39,7 +39,7 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>) -> Result<String> {
     sqlx::query(create_table_sql).execute(&mut conn).await?;
 
     // write into table
-    let id: i32 = rand::thread_rng().gen_range(0..100);
+    let id: u32 = rand::thread_rng().gen_range(0..range);
     let uuid = Uuid::new_v4();
 
     // SQL Query
@@ -51,7 +51,7 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>) -> Result<String> {
         DO UPDATE SET t1 = EXCLUDED.t1, uuid = EXCLUDED.uuid
         "#,
     )
-    .bind(id)
+    .bind(id as i32)
     .bind(now.timestamp())
     .bind(uuid)
     .execute(&mut conn) // Ensure we're using PgConnection here
@@ -65,7 +65,7 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>) -> Result<String> {
         WHERE id = $1
         "#,
     )
-    .bind(id)
+    .bind(id as i32)
     .fetch_optional(&mut conn)
     .await?;
 
@@ -117,7 +117,7 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>) -> Result<String> {
     tx.commit().await?;
 
     // Drop the table conditionally
-    if now.minute() == id as u32 {
+    if now.minute() == id {
         sqlx::query("DROP TABLE dbpulse_rw")
             .execute(&mut conn)
             .await
