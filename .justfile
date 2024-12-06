@@ -17,3 +17,6 @@ mariadb:
   -e MARIADB_ROOT_PASSWORD=secret \
   -p 3306:3306 \
   -d mariadb:latest
+
+build:
+  podman build -t dbpulse .
