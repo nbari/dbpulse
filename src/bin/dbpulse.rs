@@ -50,7 +50,6 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         });
     let dsn = dsn::parse(dsn)?;
-    println!("DSN: {:?}", dsn);
 
     let interval = matches.get_one::<u16>("interval").copied().unwrap_or(30);
 
