@@ -1,4 +1,4 @@
-FROM messense/rust-musl-cross:x86_64-musl as builder
+FROM messense/rust-musl-cross:x86_64-musl AS builder
 
 RUN apt-get update && apt-get install -y \
     git \
@@ -9,15 +9,15 @@ RUN apt-get update && apt-get install -y \
 # Set the working directory
 WORKDIR /app
 
-RUN git clone --branch develop https://github.com/nbari/dbpulse.git .
+RUN git clone https://github.com/nbari/dbpulse.git .
 
-RUN cargo build --release --locked
+RUN cargo build --release --locked --features "openssl/vendored"
 
 FROM rust:latest
 
 WORKDIR /app
 
-RUN git clone --branch develop https://github.com/nbari/dbpulse.git .
+RUN git clone https://github.com/nbari/dbpulse.git .
 
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/dbpulse /app/target/release/dbpulse
 
