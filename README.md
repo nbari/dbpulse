@@ -1,4 +1,5 @@
 [![build](https://github.com/nbari/dbpulse/actions/workflows/build.yml/badge.svg)](https://github.com/nbari/dbpulse/actions/workflows/build.yml)
+[![crates.io](https://img.shields.io/crates/v/dbpulse.svg)](https://crates.io/crates/dbpulse)
 
 # dbpulse
 
@@ -38,3 +39,11 @@ OPTIONS:
     -p, --port <port>            listening port for /metrics [env: PORT=] [default: 9300]
     -V, --version                Print version information
 ```
+
+Example:
+
+```sh
+dbpulse --dsn "postgres://postgres:secret@tcp(10.10.0.10)/dbpulse"
+```
+
+> the `dbpulse` database should be created before running the tool
