@@ -3,7 +3,10 @@ use chrono::prelude::*;
 use chrono::{DateTime, Utc};
 use dsn::DSN;
 use rand::Rng;
-use sqlx::{mysql::MySqlConnectOptions, ConnectOptions, Connection, Executor};
+use sqlx::{
+    mysql::{MySqlConnectOptions, MySqlDatabaseError},
+    ConnectOptions, Connection, Executor,
+};
 use uuid::Uuid;
 
 pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String> {
@@ -18,7 +21,52 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String
         options = options.socket(socket.as_str());
     }
 
-    let mut conn = options.connect().await?;
+    let mut conn = match options.connect().await {
+        Ok(conn) => conn,
+        Err(err) => match err {
+            sqlx::Error::Database(db_err) => {
+                if db_err
+                    .as_error()
+                    .downcast_ref::<MySqlDatabaseError>()
+                    .map(MySqlDatabaseError::number)
+                    == Some(1049)
+                {
+                    let tmp_options = options.clone().database("mysql");
+                    let mut tmp_conn = tmp_options.connect().await?;
+                    sqlx::query(&format!(
+                        "CREATE DATABASE {}",
+                        dsn.database.clone().unwrap_or_default()
+                    ))
+                    .execute(&mut tmp_conn)
+                    .await?;
+                    drop(tmp_conn);
+                    options.connect().await?
+                } else {
+                    return Err(db_err.into());
+                }
+            }
+            _ => return Err(err.into()),
+        },
+    };
+
+    // Get database version
+    let version: Option<String> = sqlx::query_scalar("SELECT VERSION()")
+        .fetch_optional(&mut conn)
+        .await
+        .context("Failed to fetch database version")?;
+
+    // check if db is in read-only mode
+    let is_read_only: (i32,) = sqlx::query_as("SELECT @@read_only;")
+        .fetch_one(&mut conn)
+        .await
+        .context("Failed to check if the database is in read-only mode")?;
+
+    if is_read_only.0 != 0 {
+        return Ok(format!(
+            "{} - Database is in read-only mode",
+            version.unwrap_or_default()
+        ));
+    }
 
     // create table
     let create_table_sql = r#"
@@ -122,11 +170,6 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String
             .context("Failed to drop table")?;
     }
 
-    // Get database version
-    let version: Option<String> = sqlx::query_scalar("SELECT VERSION()")
-        .fetch_optional(&mut conn)
-        .await
-        .context("Failed to fetch database version")?;
     drop(conn);
 
     version.context("Expected database version")
