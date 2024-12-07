@@ -29,21 +29,40 @@ The calculate the runtime:
 Current options:
 
 ```
-USAGE:
-    dbpulse [OPTIONS] --dsn <dsn>
+command line tool to monitor that database is available for read & write
 
-OPTIONS:
-        --dsn <dsn>              mysql://<username>:<password>@tcp(<host>:<port>)/<database> [env: DSN=]
-    -h, --help                   Print help information
-    -i, --interval <interval>    number of seconds between checks [env: INTERVAL=] [default: 30]
-    -p, --port <port>            listening port for /metrics [env: PORT=] [default: 9300]
-    -V, --version                Print version information
+Usage: dbpulse [OPTIONS] --dsn <dsn>
+
+Options:
+  -d, --dsn <dsn>            <mysql|postgres>://<username>:<password>@tcp(<host>:<port>)/<database> [env: DBPULSE_DSN=postgres://postgres:secret@tcp(localhost)/dbpulse]
+  -i, --interval <interval>  number of seconds between checks [env: DBPULSE_INTERVAL=] [default: 30]
+  -p, --port <port>          listening port for /metrics [env: DBPULSE_PORT=] [default: 9300]
+  -r, --range <range>        The upper limit of the ID range [env: DBPULSE_RANGE=] [default: 100]
+  -h, --help                 Print help
+  -V, --version              Print version
+
 ```
 
 Example:
 
 ```sh
-dbpulse --dsn "postgres://postgres:secret@tcp(10.10.0.10)/dbpulse"
+dbpulse --dsn "postgres://postgres:secret@tcp(10.10.0.10)/dbpulse" -r 2880
 ```
 
-> the `dbpulse` database should be created before running the tool
+> the app tries to create the database if it does not exist (depends on the user permissions)
+
+# rpm
+
+To create an RPM package:
+
+```sh
+just rpm
+```
+
+Then you need to copy the `dbpulse*.x86_64.rpm`:
+
+```sh
+cp target/generate-rpm/dbpulse-*-x86_64.rpm /host
+```
+
+```sh
