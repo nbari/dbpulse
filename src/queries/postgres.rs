@@ -3,7 +3,10 @@ use chrono::prelude::*;
 use chrono::{DateTime, Utc};
 use dsn::DSN;
 use rand::Rng;
-use sqlx::{postgres::PgConnectOptions, ConnectOptions, Connection};
+use sqlx::{
+    postgres::{PgConnectOptions, PgDatabaseError},
+    ConnectOptions, Connection,
+};
 use uuid::Uuid;
 
 pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String> {
@@ -18,7 +21,52 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String
         options = options.socket(socket.as_str());
     }
 
-    let mut conn = options.connect().await?;
+    let mut conn = match options.connect().await {
+        Ok(conn) => conn,
+        Err(err) => match err {
+            sqlx::Error::Database(db_err) => {
+                if db_err
+                    .as_error()
+                    .downcast_ref::<PgDatabaseError>()
+                    .map(PgDatabaseError::code)
+                    == Some("3D000")
+                {
+                    let tmp_options = options.clone().database("postgres");
+                    let mut tmp_conn = tmp_options.connect().await?;
+                    sqlx::query(&format!(
+                        "CREATE DATABASE {}",
+                        dsn.database.clone().unwrap_or_default()
+                    ))
+                    .execute(&mut tmp_conn)
+                    .await?;
+                    drop(tmp_conn);
+                    options.connect().await?
+                } else {
+                    return Err(db_err.into());
+                }
+            }
+            _ => return Err(err.into()),
+        },
+    };
+
+    // Get database version
+    let version: Option<String> = sqlx::query_scalar("SHOW server_version")
+        .fetch_optional(&mut conn)
+        .await
+        .context("Failed to fetch database version")?;
+
+    // Query to check if the database is in recovery (read-only)
+    let is_in_recovery: (bool,) = sqlx::query_as("SELECT pg_is_in_recovery();")
+        .fetch_one(&mut conn)
+        .await?;
+
+    // can't write to a read-only database
+    if is_in_recovery.0 {
+        return Ok(format!(
+            "{} - Database is in recovery mode",
+            version.unwrap_or_default()
+        ));
+    }
 
     // for UUID
     sqlx::query("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
@@ -124,11 +172,6 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String
             .context("Failed to drop table")?;
     }
 
-    // Get database version
-    let version: Option<String> = sqlx::query_scalar("SHOW server_version")
-        .fetch_optional(&mut conn)
-        .await
-        .context("Failed to fetch database version")?;
     drop(conn);
 
     version.context("Expected database version")
