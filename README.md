@@ -58,11 +58,10 @@ To create an RPM package:
 ```sh
 just rpm
 ```
+> you need to have `just` installed and docker running
 
 Then you need to copy the `dbpulse*.x86_64.rpm`:
 
 ```sh
 cp target/generate-rpm/dbpulse-*-x86_64.rpm /host
 ```
-
-```sh
