@@ -280,8 +280,39 @@ test-mariadb-integration:
   cargo test --test mariadb_test -- --ignored --nocapture
   @just stop-db
 
+# Build container image
 build-container:
-  docker build -t dbpulse .
+  @echo "🐳 Building container image..."
+  podman build -f Dockerfile -t dbpulse:latest .
 
-rpm: build
-  mkdir rpm; docker run -it --rm -v ./rpm:/host dbpulse
+# Test container
+test-container:
+  @echo "🧪 Testing container..."
+  podman run --rm dbpulse:latest --version
+
+# Run container with sample PostgreSQL connection
+run-container-postgres:
+  @echo "🚀 Running container with PostgreSQL..."
+  @echo "Make sure you have a PostgreSQL instance running!"
+  podman run --rm --network=host \
+    dbpulse:latest \
+    --dsn "postgres://postgres:secret@tcp(localhost:5432)/testdb" \
+    --interval 5 \
+    --range 100
+
+# Run container with sample MariaDB connection
+run-container-mariadb:
+  @echo "🚀 Running container with MariaDB..."
+  @echo "Make sure you have a MariaDB instance running!"
+  podman run --rm --network=host \
+    dbpulse:latest \
+    --dsn "mysql://dbpulse:secret@tcp(localhost:3306)/testdb" \
+    --interval 5 \
+    --range 100
+
+# Push to GitHub Container Registry (requires authentication)
+push-container:
+  @echo "📤 Pushing to ghcr.io..."
+  @echo "Make sure you're logged in: podman login ghcr.io"
+  podman tag dbpulse:latest ghcr.io/nbari/dbpulse:latest
+  podman push ghcr.io/nbari/dbpulse:latest

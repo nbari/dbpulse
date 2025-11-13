@@ -2,57 +2,46 @@
 
 This document describes how to build, publish, and use dbpulse container images.
 
-## Available Images
+## Container Image
 
 ### Production Image (Minimal - ~5MB)
-- **File**: `Dockerfile.production`
+- **File**: `Dockerfile`
 - **Base**: `FROM scratch`
 - **Size**: ~5-8 MB
-- **Use Case**: Production deployments, minimal attack surface
+- **Multi-architecture**: linux/amd64, linux/arm64
 - **Features**:
-  - Static binary
-  - No shell
-  - Runs as non-root user (65534)
+  - Static binary (musl)
+  - No shell (security)
+  - Runs as non-root user (UID 65534)
   - Only contains the binary and CA certificates
-
-### Alpine Image (~15MB)
-- **File**: `Dockerfile.alpine`
-- **Base**: `alpine:latest`
-- **Size**: ~15-20 MB
-- **Use Case**: Development, debugging, when you need shell access
-- **Features**:
-  - Includes shell and basic tools
-  - Health check built-in
-  - Runs as non-root user `dbpulse` (UID 1000)
-  - Easy to extend
+  - Minimal attack surface
 
 ## Building Locally
 
 ### Using Just
 
 ```bash
-# Build production image (minimal)
-just build-container-production
+# Build container image
+just build-container
 
-# Build alpine image
-just build-container-alpine
+# Test the image
+just test-container
 
-# Build both
-just build-containers
+# Run with PostgreSQL
+just run-container-postgres
 
-# Test the images
-just test-container-production
-just test-container-alpine
+# Run with MariaDB
+just run-container-mariadb
 ```
 
 ### Using Podman/Docker Directly
 
 ```bash
-# Production image
-podman build -f Dockerfile.production -t dbpulse:latest .
+# Build image
+podman build -f Dockerfile -t dbpulse:latest .
 
-# Alpine image
-podman build -f Dockerfile.alpine -t dbpulse:alpine .
+# Or with Docker
+docker build -f Dockerfile -t dbpulse:latest .
 ```
 
 ## Running Containers
@@ -167,21 +156,8 @@ podman pull ghcr.io/nbari/dbpulse:latest
 # Pull specific version
 podman pull ghcr.io/nbari/dbpulse:v1.0.0
 
-# Pull alpine variant
-podman pull ghcr.io/nbari/dbpulse:alpine
-
 # Run
 podman run --rm ghcr.io/nbari/dbpulse:latest --help
-```
-
-### From Docker Hub
-
-```bash
-# Pull
-podman pull docker.io/nbari/dbpulse:latest
-
-# Run
-podman run --rm docker.io/nbari/dbpulse:latest --help
 ```
 
 ## Docker Compose / Podman Compose
@@ -265,16 +241,10 @@ spec:
 
 ## Multi-Architecture Support
 
-The GitHub Actions workflow builds for multiple architectures:
+The GitHub Actions workflow automatically builds for multiple architectures:
 
-**Production image:**
-- linux/amd64 (x86_64)
-- linux/arm64 (ARM64/aarch64)
-
-**Alpine image:**
-- linux/amd64 (x86_64)
-- linux/arm64 (ARM64/aarch64)
-- linux/arm/v7 (ARM 32-bit)
+- **linux/amd64** (x86_64)
+- **linux/arm64** (ARM64/aarch64)
 
 Pull the appropriate image for your platform:
 
@@ -295,13 +265,12 @@ podman inspect ghcr.io/nbari/dbpulse:latest | grep Architecture
 5. **No Shell**: Production image has no shell (prevents shell exploits)
 6. **Read-only Root**: Can be run with read-only root filesystem
 
-## Image Size Comparison
+## Image Size
 
-| Image | Uncompressed | Compressed |
-|-------|-------------|------------|
-| Production (scratch) | ~5-8 MB | ~2-3 MB |
-| Alpine | ~15-20 MB | ~5-8 MB |
-| Full (with build tools) | ~1.5 GB | ~500 MB |
+| Component | Size |
+|-----------|------|
+| Uncompressed | ~5-8 MB |
+| Compressed (registry) | ~2-3 MB |
 
 ## Troubleshooting
 
@@ -310,9 +279,6 @@ podman inspect ghcr.io/nbari/dbpulse:latest | grep Architecture
 ```bash
 # Check logs
 podman logs dbpulse
-
-# Run with shell (alpine only)
-podman run --rm -it --entrypoint /bin/sh dbpulse:alpine
 
 # Check if port is available
 netstat -tulpn | grep 9300
@@ -334,11 +300,9 @@ podman run --network=host ...
 ### Permission denied
 
 ```bash
-# Production image runs as user 65534
+# Container runs as user 65534 (nobody)
 # Make sure no privileged operations are needed
-
-# Alpine runs as user 1000
-# Adjust volumes/mounts accordingly
+# Adjust volume/mount permissions accordingly
 ```
 
 ## Environment Variables
@@ -357,11 +321,10 @@ podman run --rm \
 
 1. **Use specific tags** - Don't use `:latest` in production
 2. **Pin versions** - Use semantic version tags (`:v1.2.3`)
-3. **Health checks** - Alpine image includes health checks
-4. **Resource limits** - Set memory/CPU limits in Kubernetes
-5. **Secrets** - Use Kubernetes secrets or env vars, not DSN in args
-6. **Monitoring** - Scrape metrics endpoint at `/metrics`
-7. **Updates** - Use dependabot or renovate to track updates
+3. **Resource limits** - Set memory/CPU limits in Kubernetes
+4. **Secrets** - Use Kubernetes secrets or env vars, not DSN in args
+5. **Monitoring** - Scrape metrics endpoint at `/metrics`
+6. **Updates** - Use dependabot or renovate to track updates
 
 ## Additional Resources
 
