@@ -4,12 +4,30 @@ use chrono::{DateTime, Utc};
 use dsn::DSN;
 use rand::Rng;
 use sqlx::{
-    ConnectOptions, Connection, Executor,
-    mysql::{MySqlConnectOptions, MySqlDatabaseError},
+    ConnectOptions, Connection, Executor, Row,
+    mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlSslMode},
 };
 use uuid::Uuid;
 
-pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String> {
+use super::HealthCheckResult;
+use crate::tls::{TlsConfig, TlsMetadata, TlsMode};
+
+pub async fn test_rw(
+    dsn: &DSN,
+    now: DateTime<Utc>,
+    range: u32,
+    tls: &TlsConfig,
+) -> Result<HealthCheckResult> {
+    test_rw_with_table(dsn, now, range, tls, "dbpulse_rw").await
+}
+
+pub async fn test_rw_with_table(
+    dsn: &DSN,
+    now: DateTime<Utc>,
+    range: u32,
+    tls: &TlsConfig,
+    table_name: &str,
+) -> Result<HealthCheckResult> {
     let mut options = MySqlConnectOptions::new()
         .username(dsn.username.clone().unwrap_or_default().as_ref())
         .password(dsn.password.clone().unwrap_or_default().as_str())
@@ -19,6 +37,31 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String
         options = options.host(host.as_str()).port(dsn.port.unwrap_or(3306));
     } else if let Some(socket) = &dsn.socket {
         options = options.socket(socket.as_str());
+    }
+
+    // Apply TLS configuration
+    options = match tls.mode {
+        TlsMode::Disable => options.ssl_mode(MySqlSslMode::Disabled),
+        TlsMode::Require => options.ssl_mode(MySqlSslMode::Required),
+        TlsMode::VerifyCA => {
+            let mut opts = options.ssl_mode(MySqlSslMode::VerifyCa);
+            if let Some(ca_path) = &tls.ca {
+                opts = opts.ssl_ca(ca_path);
+            }
+            opts
+        }
+        TlsMode::VerifyFull => {
+            let mut opts = options.ssl_mode(MySqlSslMode::VerifyIdentity);
+            if let Some(ca_path) = &tls.ca {
+                opts = opts.ssl_ca(ca_path);
+            }
+            opts
+        }
+    };
+
+    // Apply client certificate if provided
+    if let (Some(cert_path), Some(key_path)) = (&tls.cert, &tls.key) {
+        options = options.ssl_client_cert(cert_path).ssl_client_key(key_path);
     }
 
     let mut conn = match options.connect().await {
@@ -56,63 +99,79 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String
         .context("Failed to fetch database version")?;
 
     // check if db is in read-only mode
-    let is_read_only: (i32,) = sqlx::query_as("SELECT @@read_only;")
+    let is_read_only: (String,) = sqlx::query_as("SELECT @@read_only;")
         .fetch_one(&mut conn)
         .await
         .context("Failed to check if the database is in read-only mode")?;
 
-    if is_read_only.0 != 0 {
-        return Ok(format!(
-            "{} - Database is in read-only mode",
-            version.unwrap_or_default()
-        ));
+    if is_read_only.0.to_uppercase() == "ON" || is_read_only.0 == "1" {
+        let tls_metadata = if tls.mode.is_enabled() {
+            extract_tls_metadata(&mut conn).await.ok()
+        } else {
+            None
+        };
+        return Ok(HealthCheckResult {
+            version: format!(
+                "{} - Database is in read-only mode",
+                version.unwrap_or_default()
+            ),
+            tls_metadata,
+        });
     }
 
-    // create table
-    let create_table_sql = r#"
-        CREATE TABLE IF NOT EXISTS dbpulse_rw (
+    // create table with optimized schema
+    let create_table_sql = format!(
+        r#"
+        CREATE TABLE IF NOT EXISTS {} (
             id INT NOT NULL,
-            t1 INT(11) NOT NULL ,
+            t1 BIGINT NOT NULL,
             t2 TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             uuid CHAR(36) CHARACTER SET ascii,
+            PRIMARY KEY(id),
             UNIQUE KEY(uuid),
-            PRIMARY KEY(id)
+            INDEX idx_t2 (t2)
         ) ENGINE=InnoDB
-    "#;
+        "#,
+        table_name
+    );
 
-    conn.execute(create_table_sql).await?;
+    conn.execute(create_table_sql.as_str()).await?;
 
     // write into table
     let id: u32 = rand::rng().random_range(0..range);
     let uuid = Uuid::new_v4();
 
     // SQL Query
-    sqlx::query(
+    let insert_sql = format!(
         r#"
-        INSERT INTO dbpulse_rw (id, t1, uuid)
+        INSERT INTO {} (id, t1, uuid)
         VALUES (?, ?, ?)
         ON DUPLICATE KEY UPDATE
         t1 = VALUES(t1), uuid = VALUES(uuid)
         "#,
-    )
-    .bind(id)
-    .bind(now.timestamp())
-    .bind(uuid.to_string())
-    .execute(&mut conn)
-    .await?;
+        table_name
+    );
+    sqlx::query(&insert_sql)
+        .bind(id)
+        .bind(now.timestamp())
+        .bind(uuid.to_string())
+        .execute(&mut conn)
+        .await?;
 
     // Check if stored record matches
-    let row: Option<(i64, String)> = sqlx::query_as(
+    let select_sql = format!(
         r#"
         SELECT t1, uuid
-        FROM dbpulse_rw
+        FROM {}
         WHERE id = ?
         "#,
-    )
-    .bind(id)
-    .fetch_optional(&mut conn)
-    .await
-    .context("Failed to query the database")?;
+        table_name
+    );
+    let row: Option<(i64, String)> = sqlx::query_as(&select_sql)
+        .bind(id)
+        .fetch_optional(&mut conn)
+        .await
+        .context("Failed to query the database")?;
 
     // Ensure the row exists and matches
     let (t1, v4) = row.context("Expected records")?;
@@ -126,51 +185,122 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String
         ));
     }
 
-    // Start a transaction to set all `t1` records to 0
+    // Test transaction rollback with a unique ID to avoid conflicts with parallel tests
+    // Use timestamp-based ID that won't conflict with normal operations
+    let rollback_test_id = (now.timestamp_micros() % 2147483647) as i32;
+
     let mut tx = conn.begin().await?;
-    sqlx::query("UPDATE dbpulse_rw SET t1 = ?")
-        .bind(0)
+
+    // Insert a test record
+    let insert_tx_sql = format!(
+        "INSERT INTO {} (id, t1, uuid) VALUES (?, 999, UUID()) ON DUPLICATE KEY UPDATE t1 = 999",
+        table_name
+    );
+    sqlx::query(&insert_tx_sql)
+        .bind(rollback_test_id)
         .execute(tx.as_mut())
         .await?;
-    let rows: Vec<i64> = sqlx::query_scalar("SELECT t1 FROM dbpulse_rw")
-        .fetch_all(tx.as_mut())
-        .await
-        .context("Failed to fetch rows")?;
 
-    for row in rows {
-        if row != 0 {
-            return Err(anyhow!("Records don't match: {} != {}", row, 0));
-        }
+    // Update it within the transaction
+    let update_tx_sql = format!("UPDATE {} SET t1 = ? WHERE id = ?", table_name);
+    sqlx::query(&update_tx_sql)
+        .bind(0)
+        .bind(rollback_test_id)
+        .execute(tx.as_mut())
+        .await?;
+
+    // Verify the update
+    let select_tx_sql = format!("SELECT t1 FROM {} WHERE id = ?", table_name);
+    let updated_value: Option<i64> = sqlx::query_scalar(&select_tx_sql)
+        .bind(rollback_test_id)
+        .fetch_optional(tx.as_mut())
+        .await?;
+
+    if updated_value != Some(0) {
+        return Err(anyhow!(
+            "Transaction update failed: expected 0, got {:?}",
+            updated_value
+        ));
     }
 
     // Roll back this transaction
     tx.rollback().await?;
 
-    // Start a new transaction to update record 0 with current timestamp
-    let mut tx = conn.begin().await?;
-    sqlx::query(
-        r#"
-        INSERT INTO dbpulse_rw (id, t1, uuid)
-        VALUES (0, ?, UUID())
-        ON DUPLICATE KEY UPDATE t1 = ?
-        "#,
-    )
-    .bind(now.timestamp())
-    .bind(now.timestamp())
-    .execute(tx.as_mut())
-    .await
-    .context("Failed to insert or update record")?;
-    tx.commit().await?;
+    // Verify the rollback worked (value should be 999 or record not exist)
+    let select_rollback_sql = format!("SELECT t1 FROM {} WHERE id = ?", table_name);
+    let rolled_back_value: Option<i64> = sqlx::query_scalar(&select_rollback_sql)
+        .bind(rollback_test_id)
+        .fetch_optional(&mut conn)
+        .await?;
 
-    // Drop the table conditionally
-    if now.minute() == id {
-        sqlx::query("DROP TABLE dbpulse_rw")
-            .execute(&mut conn)
-            .await
-            .context("Failed to drop table")?;
+    if rolled_back_value == Some(0) {
+        return Err(anyhow!("Transaction rollback failed: value is still 0"));
     }
+
+    // Cleanup strategy: Remove old records to prevent unbounded growth
+    // Delete records older than 1 hour (keeps table size bounded)
+    let one_hour_ago = (now - chrono::Duration::hours(1)).to_rfc3339();
+    let delete_old_sql = format!("DELETE FROM {} WHERE t2 < ?", table_name);
+    sqlx::query(&delete_old_sql)
+        .bind(one_hour_ago)
+        .execute(&mut conn)
+        .await
+        .ok(); // Ignore errors, cleanup is best-effort
+
+    // Periodic full table drop: deterministic cleanup every hour at minute 0
+    // This ensures table is recreated fresh periodically
+    if now.minute() == 0 && id < 5 {
+        let drop_table_sql = format!("DROP TABLE {}", table_name);
+        sqlx::query(&drop_table_sql).execute(&mut conn).await.ok(); // Ignore errors, table might not exist
+    }
+
+    // Extract TLS metadata if TLS is enabled
+    let tls_metadata = if tls.mode.is_enabled() {
+        extract_tls_metadata(&mut conn).await.ok()
+    } else {
+        None
+    };
 
     drop(conn);
 
-    version.context("Expected database version")
+    Ok(HealthCheckResult {
+        version: version.context("Expected database version")?,
+        tls_metadata,
+    })
+}
+
+/// Extract TLS metadata from MySQL connection
+async fn extract_tls_metadata(conn: &mut sqlx::MySqlConnection) -> Result<TlsMetadata> {
+    // Query SSL status variables
+    let rows = sqlx::query("SHOW STATUS LIKE 'Ssl%'")
+        .fetch_all(conn)
+        .await?;
+
+    let mut tls_version: Option<String> = None;
+    let mut tls_cipher: Option<String> = None;
+
+    for row in rows {
+        let variable_name: String = row.try_get(0)?;
+        let value: String = row.try_get(1)?;
+
+        match variable_name.as_str() {
+            "Ssl_version" => {
+                if !value.is_empty() {
+                    tls_version = Some(value);
+                }
+            }
+            "Ssl_cipher" => {
+                if !value.is_empty() {
+                    tls_cipher = Some(value);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(TlsMetadata {
+        version: tls_version,
+        cipher: tls_cipher,
+        ..Default::default()
+    })
 }

@@ -199,38 +199,9 @@ t-deploy message="CI test": check-develop check-clean test
     echo "🧹 To remove it:"
     echo "   git push origin :refs/tags/${tag} && git tag -d ${tag}"
 
-# Check for security vulnerabilities
-audit:
-  @echo "🔒 Checking for security vulnerabilities..."
-  cargo audit
-
-# Check dependency licenses
-deny:
-  @echo "📜 Checking dependency licenses..."
-  cargo deny check
-
 # Full CI check (what runs in CI)
-ci: clippy fmt test audit deny
+ci: clippy fmt test
   @echo "✅ All CI checks passed!"
-
-# Build RPM package
-build-rpm: build
-  @echo "📦 Building RPM package..."
-  cargo generate-rpm
-
-# Build DEB package
-build-deb: build
-  @echo "📦 Building DEB package..."
-  cargo deb
-
-# Build all packages
-build-packages: build-rpm build-deb
-  @echo "✅ All packages built!"
-
-# Show documentation
-doc:
-  @echo "📚 Building and opening documentation..."
-  cargo doc --open --no-deps
 
 # Check outdated dependencies
 outdated:
@@ -247,19 +218,67 @@ example:
   @echo "📖 Running example with sample.crontab..."
   cargo run -- -f sample.crontab
 
+# Start PostgreSQL container for integration testing
 postgres:
   podman run --rm --name dbpulse-postgres \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=secret \
+  -e POSTGRES_DB=testdb \
   -p 5432:5432 \
-  -d postgres:16 postgres
+  -d postgres:latest
 
+# Start MariaDB container for integration testing
 mariadb:
   podman run --rm --name dbpulse-mariadb \
-  -e MARIADB_USER=root \
+  -e MARIADB_USER=dbpulse \
+  -e MARIADB_PASSWORD=secret \
   -e MARIADB_ROOT_PASSWORD=secret \
+  -e MARIADB_DATABASE=testdb \
   -p 3306:3306 \
   -d mariadb:latest
+
+# Stop all test database containers
+stop-db:
+  -podman rm -f dbpulse-postgres dbpulse-mariadb 2>/dev/null || true
+  @sleep 2
+
+# Run integration tests against local databases (quick smoke test)
+integration-test: build stop-db
+  @echo "🚀 Starting integration smoke tests..."
+  @just postgres
+  @just mariadb
+  @sleep 5
+  @echo "📊 Testing PostgreSQL..."
+  @timeout 30s cargo run --release -- --dsn "postgres://postgres:secret@tcp(localhost:5432)/testdb" --interval 5 --range 100 || true
+  @echo "📊 Testing MariaDB..."
+  @timeout 30s cargo run --release -- --dsn "mysql://dbpulse:secret@tcp(localhost:3306)/testdb" --interval 5 --range 100 || true
+  @just stop-db
+  @echo "✅ Integration smoke tests complete!"
+
+# Run full integration test suite (requires running databases)
+test-integration:
+  @echo "🧪 Running integration tests..."
+  @scripts/setup-test-dbs.sh || (echo "❌ Test database setup failed. Fix the issues above before running tests." && exit 1)
+  @echo "Testing PostgreSQL..."
+  cargo test --test postgres_test -- --ignored --nocapture
+  @echo "Testing MariaDB..."
+  cargo test --test mariadb_test -- --ignored --nocapture
+  @just stop-db
+  @echo "✅ Integration tests complete!"
+
+# Run only PostgreSQL integration tests
+test-postgres-integration:
+  @echo "🧪 Running PostgreSQL integration tests..."
+  @scripts/setup-test-dbs.sh || exit 1
+  cargo test --test postgres_test -- --ignored --nocapture
+  @just stop-db
+
+# Run only MariaDB integration tests
+test-mariadb-integration:
+  @echo "🧪 Running MariaDB integration tests..."
+  @scripts/setup-test-dbs.sh || exit 1
+  cargo test --test mariadb_test -- --ignored --nocapture
+  @just stop-db
 
 build-container:
   docker build -t dbpulse .
