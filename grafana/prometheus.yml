@@ -1,0 +1,37 @@
+---
+# Sample Prometheus scrape configuration for DBPulse
+#
+# Add this to your prometheus.yml configuration file
+
+scrape_configs:
+  # DBPulse database health monitoring
+  - job_name: dbpulse
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    static_configs:
+      - targets:
+          - localhost:9300
+        labels:
+          instance: database-primary
+          environment: production
+
+  # Example: Multiple DBPulse instances monitoring different databases
+  - job_name: dbpulse-postgresql
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - postgres-monitor:9300
+        labels:
+          database_type: postgresql
+          cluster: main
+          environment: production
+
+  - job_name: dbpulse-mariadb
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - mariadb-monitor:9300
+        labels:
+          database_type: mariadb
+          cluster: main
+          environment: production
