@@ -1,11 +1,11 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use chrono::prelude::*;
 use chrono::{DateTime, Utc};
 use dsn::DSN;
 use rand::Rng;
 use sqlx::{
-    postgres::{PgConnectOptions, PgDatabaseError},
     ConnectOptions, Connection,
+    postgres::{PgConnectOptions, PgDatabaseError},
 };
 use uuid::Uuid;
 
@@ -87,7 +87,7 @@ pub async fn test_rw(dsn: &DSN, now: DateTime<Utc>, range: u32) -> Result<String
     sqlx::query(create_table_sql).execute(&mut conn).await?;
 
     // write into table
-    let id: u32 = rand::thread_rng().gen_range(0..range);
+    let id: u32 = rand::rng().random_range(0..range);
     let uuid = Uuid::new_v4();
 
     // SQL Query

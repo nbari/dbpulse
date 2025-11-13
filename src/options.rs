@@ -1,6 +1,6 @@
 use clap::{
-    builder::styling::{AnsiColor, Effects, Styles},
     Arg, ColorChoice, Command,
+    builder::styling::{AnsiColor, Effects, Styles},
 };
 
 #[must_use]
@@ -76,9 +76,24 @@ mod tests {
 
         #[test]
         fn test_new_no_args() {
+            // Temporarily remove environment variable to test required DSN
+            let original_dsn = std::env::var("DBPULSE_DSN").ok();
+            // SAFETY: This test runs in isolation and we restore the variable afterward
+            unsafe {
+                std::env::remove_var("DBPULSE_DSN");
+            }
+
             let cmd = new();
             let matches = cmd.try_get_matches_from(vec!["dbpulse"]);
             assert!(matches.is_err());
+
+            // Restore original environment variable if it existed
+            if let Some(dsn) = original_dsn {
+                // SAFETY: Restoring the original state
+                unsafe {
+                    std::env::set_var("DBPULSE_DSN", dsn);
+                }
+            }
         }
 
         #[test]

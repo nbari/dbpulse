@@ -1,5 +1,5 @@
 use anyhow::Result;
-use axum::{http::StatusCode, response::IntoResponse, routing::get, Router};
+use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
 use chrono::prelude::*;
 use chrono::{Duration, Utc};
 use dbpulse::{
