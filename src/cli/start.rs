@@ -8,7 +8,7 @@ use super::{commands, dispatch};
 /// 1. Parse: Extract CLI arguments
 /// 2. Extract Verbosity: Convert flag count to logging level (not used here)
 /// 3. Initialize Telemetry: Set up structured logging/tracing (not used here)
-/// 4. Dispatch: Convert ArgMatches into typed Action enum
+/// 4. Dispatch: Convert `ArgMatches` into typed Action enum
 /// 5. Execute: Run the action's business logic
 ///
 /// # Errors

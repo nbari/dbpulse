@@ -46,7 +46,7 @@ mod tests {
         };
 
         // Test Debug trait
-        let debug_str = format!("{:?}", action);
+        let debug_str = format!("{action:?}");
         assert!(debug_str.contains("Monitor"));
     }
 

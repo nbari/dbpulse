@@ -1,6 +1,9 @@
-[![build](https://github.com/nbari/dbpulse/actions/workflows/build.yml/badge.svg)](https://github.com/nbari/dbpulse/actions/workflows/build.yml)
-[![codecov](https://codecov.io/gh/nbari/dbpulse/graph/badge.svg?token=I7X5VOMML6)](https://codecov.io/gh/nbari/dbpulse)
-[![crates.io](https://img.shields.io/crates/v/dbpulse.svg)](https://crates.io/crates/dbpulse)
+[![Build Status](https://github.com/nbari/dbpulse/actions/workflows/build.yml/badge.svg)](https://github.com/nbari/dbpulse/actions/workflows/build.yml)
+[![Test Status](https://github.com/nbari/dbpulse/actions/workflows/test.yml/badge.svg)](https://github.com/nbari/dbpulse/actions/workflows/test.yml)
+[![Coverage](https://codecov.io/gh/nbari/dbpulse/graph/badge.svg?token=I7X5VOMML6)](https://codecov.io/gh/nbari/dbpulse)
+[![Crates.io](https://img.shields.io/crates/v/dbpulse.svg)](https://crates.io/crates/dbpulse)
+[![License](https://img.shields.io/crates/l/dbpulse.svg)](https://github.com/nbari/dbpulse/blob/master/LICENSE)
+[![GHCR](https://ghcr-badge.egpl.dev/nbari/dbpulse/latest_tag?trim=major&label=latest)](https://github.com/nbari/dbpulse/pkgs/container/dbpulse)
 
 # dbpulse
 
@@ -138,3 +141,23 @@ podman run -p 9300:9300 ghcr.io/nbari/dbpulse:latest \
 Images are built for:
 - `linux/amd64` - x86_64 architecture
 - `linux/arm64` - ARM64 architecture (AWS Graviton, Raspberry Pi, etc.)
+
+## Development
+
+### Testing
+
+**Run all tests (unit, integration, TLS):**
+```bash
+just test
+```
+
+**Run individual test suites:**
+```bash
+just unit-test         # Unit tests only
+just test-integration  # Integration tests (non-TLS)
+just test-tls          # TLS integration tests
+```
+
+For detailed documentation, see:
+- [TLS_TESTING.md](TLS_TESTING.md) - TLS testing guide
+- [scripts/README.md](scripts/README.md) - Script documentation

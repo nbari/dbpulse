@@ -8,3 +8,6 @@ rpm
 .cursor/
 .idea/
 .vscode/
+
+# TLS certificates for testing
+.certs/

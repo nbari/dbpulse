@@ -1,161 +1,29 @@
 ---
-name: Test
+name: Integration Tests (TLS)
 
 on:
   workflow_call:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - '.github/workflows/integration-test-tls.yml'
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
-  format:
-    name: Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - name: Format
-        run: cargo fmt --all -- --check
-
-  lint:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D clippy::all -D clippy::nursery
-          -D warnings
-
-  check:
-    name: Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Check
-        run: cargo check
-
-  test:
-    name: Test
-    strategy:
-      matrix:
-        os:
-          - ubuntu-latest
-          - macOS-latest
-          - windows-latest
-        rust:
-          - stable
-    runs-on: ${{ matrix.os }}
-    needs:
-      - format
-      - lint
-      - check
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: test
-        run: cargo test
-
-  integration-test:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    needs:
-      - format
-      - lint
-      - check
-    
-    services:
-      postgres:
-        image: postgres:latest
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: secret
-          POSTGRES_DB: testdb
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      
-      mariadb:
-        image: mariadb:latest
-        env:
-          MARIADB_USER: dbpulse
-          MARIADB_PASSWORD: secret
-          MARIADB_ROOT_PASSWORD: secret
-          MARIADB_DATABASE: testdb
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd "mariadb-admin ping -h localhost -u root -psecret"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      
-      - name: Install database clients
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client mariadb-client
-      
-      - name: Wait for databases
-        run: |
-          echo "Waiting for PostgreSQL..."
-          for i in {1..30}; do
-            if pg_isready -h localhost -p 5432 -U postgres; then
-              echo "PostgreSQL is ready!"
-              break
-            fi
-            echo "PostgreSQL not ready, waiting... ($i/30)"
-            sleep 2
-          done
-          
-          echo "Waiting for MariaDB..."
-          for i in {1..30}; do
-            if mariadb -h 127.0.0.1 -u dbpulse -psecret -D testdb -e "SELECT 1" &>/dev/null; then
-              echo "MariaDB is ready!"
-              break
-            fi
-            echo "MariaDB not ready, waiting... ($i/30)"
-            sleep 2
-          done
-      
-      - name: Run PostgreSQL integration tests
-        run: cargo test --test postgres_test -- --ignored --nocapture
-        env:
-          RUST_BACKTRACE: 1
-      
-      - name: Run MariaDB integration tests
-        run: cargo test --test mariadb_test -- --ignored --nocapture
-        env:
-          RUST_BACKTRACE: 1
-
   integration-test-tls:
-    name: Integration Tests with TLS
+    name: TLS Integration Tests
     runs-on: ubuntu-latest
-    needs:
-      - format
-      - lint
-      - check
     
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       
-      - name: Install dependencies
+      - name: Install database clients and OpenSSL
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client mariadb-client openssl
@@ -163,8 +31,16 @@ jobs:
       - name: Generate TLS certificates
         run: |
           ./scripts/gen-certs.sh
+          
           # Make MariaDB key readable
           chmod 644 .certs/mariadb/server.key
+          
+          # Show certificate info
+          echo "==> PostgreSQL Certificate Info:"
+          openssl x509 -in .certs/postgres/server.crt -noout -subject -issuer -dates
+          
+          echo "==> MariaDB Certificate Info:"
+          openssl x509 -in .certs/mariadb/server.crt -noout -subject -issuer -dates
       
       - name: Prepare PostgreSQL with TLS
         run: |
@@ -204,6 +80,9 @@ jobs:
             echo "Waiting for PostgreSQL... ($i/30)"
             sleep 2
           done
+          
+          # Verify TLS is enabled
+          docker exec postgres-tls psql -U postgres -d testdb -c "SHOW ssl;"
       
       - name: Start MariaDB with TLS
         run: |
@@ -233,39 +112,58 @@ jobs:
             echo "Waiting for MariaDB... ($i/30)"
             sleep 2
           done
+          
+          # Verify TLS is enabled
+          docker exec mariadb-tls mariadb -u root -psecret -e "SHOW VARIABLES LIKE 'have_ssl';"
       
-      - name: Verify TLS is enabled (PostgreSQL)
+      - name: Test TLS connectivity (PostgreSQL)
         run: |
-          docker exec postgres-tls psql -U postgres -d testdb -c "SHOW ssl;"
+          # Test that TLS connection works
+          PGSSLMODE=require psql "postgresql://postgres:secret@localhost:5432/testdb" -c "SELECT version();"
+          
+          # Verify we're using TLS
           PGSSLMODE=require psql "postgresql://postgres:secret@localhost:5432/testdb" \
             -c "SELECT ssl, version, cipher FROM pg_stat_ssl WHERE pid = pg_backend_pid();"
       
-      - name: Verify TLS is enabled (MariaDB)
+      - name: Test TLS connectivity (MariaDB)
         run: |
-          docker exec mariadb-tls mariadb -u root -psecret -e "SHOW VARIABLES LIKE 'have_ssl';"
+          # Test that TLS connection works
+          docker exec mariadb-tls mariadb -h 127.0.0.1 -u dbpulse -psecret -D testdb --ssl -e "SELECT VERSION();"
+          
+          # Verify we're using TLS
           docker exec mariadb-tls mariadb -h 127.0.0.1 -u dbpulse -psecret -D testdb --ssl \
             -e "SHOW STATUS LIKE 'Ssl_cipher';"
       
-      - name: Run PostgreSQL TLS tests
+      - name: Run PostgreSQL integration tests (basic)
+        run: cargo test --test postgres_test -- --ignored --nocapture
+        env:
+          TEST_POSTGRES_DSN: "postgresql://postgres:secret@tcp(localhost:5432)/testdb?sslmode=require"
+      
+      - name: Run PostgreSQL TLS-specific tests
         run: cargo test --test postgres_tls_test -- --ignored --nocapture
         env:
+          TEST_POSTGRES_DSN: "postgresql://postgres:secret@tcp(localhost:5432)/testdb"
           POSTGRES_CA_CERT: "${{ github.workspace }}/.certs/postgres/ca.crt"
-          RUST_BACKTRACE: 1
       
-      - name: Run MariaDB TLS tests
+      - name: Run MariaDB integration tests (basic)
+        run: cargo test --test mariadb_test -- --ignored --nocapture
+        env:
+          TEST_MARIADB_DSN: "mysql://dbpulse:secret@tcp(localhost:3306)/testdb?ssl-mode=REQUIRED"
+      
+      - name: Run MariaDB TLS-specific tests
         run: cargo test --test mariadb_tls_test -- --ignored --nocapture
         env:
+          TEST_MARIADB_DSN: "mysql://dbpulse:secret@tcp(localhost:3306)/testdb"
           MARIADB_CA_CERT: "${{ github.workspace }}/.certs/mariadb/ca.crt"
-          RUST_BACKTRACE: 1
       
-      - name: Show logs on failure
+      - name: Show container logs on failure
         if: failure()
         run: |
           echo "==> PostgreSQL logs:"
-          docker logs postgres-tls || true
+          docker logs postgres-tls
           echo ""
           echo "==> MariaDB logs:"
-          docker logs mariadb-tls || true
+          docker logs mariadb-tls
       
       - name: Cleanup
         if: always()
