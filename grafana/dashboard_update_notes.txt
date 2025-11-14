@@ -1,0 +1,1 @@
+Note: dashboard.json can be updated manually in Grafana UI by importing new panels for the metrics listed in README.md

@@ -47,6 +47,11 @@
     - Measures TLS connection establishment time
 
 ### Improved
+* **Dependency Reduction**: Replaced `lazy_static` crate with `std::sync::LazyLock`
+  - Zero-dependency solution using Rust standard library (stable since 1.80)
+  - Reduced compilation time and dependency tree
+  - Better performance with lower initialization overhead
+  - Improved IDE support and error messages
 * Query optimizations to prevent database server overload:
   - Added `LIMIT 10000` to DELETE cleanup operations
   - Prevents long-running DELETE queries that could block other operations

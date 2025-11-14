@@ -11,7 +11,10 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use super::HealthCheckResult;
-use crate::metrics::{CONNECTIONS_ACTIVE, CONNECTION_DURATION, OPERATION_DURATION, ROWS_AFFECTED, TABLE_SIZE_BYTES, TABLE_ROWS, TLS_HANDSHAKE_DURATION};
+use crate::metrics::{
+    CONNECTION_DURATION, CONNECTIONS_ACTIVE, OPERATION_DURATION, ROWS_AFFECTED, TABLE_ROWS,
+    TABLE_SIZE_BYTES, TLS_HANDSHAKE_DURATION,
+};
 use crate::tls::{TlsConfig, TlsMetadata, TlsMode};
 
 pub async fn test_rw(
@@ -74,10 +77,14 @@ pub async fn test_rw_with_table(
     let mut conn = match options.connect().await {
         Ok(conn) => {
             let connect_duration = connect_timer.elapsed().as_secs_f64();
-            OPERATION_DURATION.with_label_values(&["mysql", "connect"]).observe(connect_duration);
+            OPERATION_DURATION
+                .with_label_values(&["mysql", "connect"])
+                .observe(connect_duration);
             // Record TLS handshake duration if TLS is enabled
             if tls.mode.is_enabled() {
-                TLS_HANDSHAKE_DURATION.with_label_values(&["mysql"]).observe(connect_duration);
+                TLS_HANDSHAKE_DURATION
+                    .with_label_values(&["mysql"])
+                    .observe(connect_duration);
             }
             conn
         }
@@ -100,10 +107,14 @@ pub async fn test_rw_with_table(
                     drop(tmp_conn);
                     let conn = options.connect().await?;
                     let connect_duration = connect_timer.elapsed().as_secs_f64();
-                    OPERATION_DURATION.with_label_values(&["mysql", "connect"]).observe(connect_duration);
+                    OPERATION_DURATION
+                        .with_label_values(&["mysql", "connect"])
+                        .observe(connect_duration);
                     // Record TLS handshake duration if TLS is enabled
                     if tls.mode.is_enabled() {
-                        TLS_HANDSHAKE_DURATION.with_label_values(&["mysql"]).observe(connect_duration);
+                        TLS_HANDSHAKE_DURATION
+                            .with_label_values(&["mysql"])
+                            .observe(connect_duration);
                     }
                     conn
                 } else {
@@ -163,7 +174,9 @@ pub async fn test_rw_with_table(
 
     let create_table_timer = Instant::now();
     conn.execute(create_table_sql.as_str()).await?;
-    OPERATION_DURATION.with_label_values(&["mysql", "create_table"]).observe(create_table_timer.elapsed().as_secs_f64());
+    OPERATION_DURATION
+        .with_label_values(&["mysql", "create_table"])
+        .observe(create_table_timer.elapsed().as_secs_f64());
 
     // write into table
     let id: u32 = rand::rng().random_range(0..range);
@@ -186,8 +199,12 @@ pub async fn test_rw_with_table(
         .bind(uuid.to_string())
         .execute(&mut conn)
         .await?;
-    OPERATION_DURATION.with_label_values(&["mysql", "insert"]).observe(insert_timer.elapsed().as_secs_f64());
-    ROWS_AFFECTED.with_label_values(&["mysql", "insert"]).inc_by(insert_result.rows_affected());
+    OPERATION_DURATION
+        .with_label_values(&["mysql", "insert"])
+        .observe(insert_timer.elapsed().as_secs_f64());
+    ROWS_AFFECTED
+        .with_label_values(&["mysql", "insert"])
+        .inc_by(insert_result.rows_affected());
 
     // Check if stored record matches
     let select_sql = format!(
@@ -204,7 +221,9 @@ pub async fn test_rw_with_table(
         .fetch_optional(&mut conn)
         .await
         .context("Failed to query the database")?;
-    OPERATION_DURATION.with_label_values(&["mysql", "select"]).observe(select_timer.elapsed().as_secs_f64());
+    OPERATION_DURATION
+        .with_label_values(&["mysql", "select"])
+        .observe(select_timer.elapsed().as_secs_f64());
 
     // Ensure the row exists and matches
     let (t1, v4) = row.context("Expected records")?;
@@ -271,7 +290,9 @@ pub async fn test_rw_with_table(
         CONNECTIONS_ACTIVE.dec();
         return Err(anyhow!("Transaction rollback failed: value is still 0"));
     }
-    OPERATION_DURATION.with_label_values(&["mysql", "transaction_test"]).observe(transaction_timer.elapsed().as_secs_f64());
+    OPERATION_DURATION
+        .with_label_values(&["mysql", "transaction_test"])
+        .observe(transaction_timer.elapsed().as_secs_f64());
 
     // Cleanup strategy: Remove old records to prevent unbounded growth
     // Delete records older than 1 hour (keeps table size bounded)
@@ -284,9 +305,13 @@ pub async fn test_rw_with_table(
         .execute(&mut conn)
         .await
     {
-        ROWS_AFFECTED.with_label_values(&["mysql", "delete"]).inc_by(delete_result.rows_affected());
+        ROWS_AFFECTED
+            .with_label_values(&["mysql", "delete"])
+            .inc_by(delete_result.rows_affected());
     }
-    OPERATION_DURATION.with_label_values(&["mysql", "cleanup"]).observe(cleanup_timer.elapsed().as_secs_f64());
+    OPERATION_DURATION
+        .with_label_values(&["mysql", "cleanup"])
+        .observe(cleanup_timer.elapsed().as_secs_f64());
 
     // Periodic full table drop: deterministic cleanup every hour at minute 0
     // This ensures table is recreated fresh periodically
@@ -299,7 +324,9 @@ pub async fn test_rw_with_table(
             .await
         {
             // Record table row count
-            TABLE_ROWS.with_label_values(&["mysql", table_name]).set(row_count);
+            TABLE_ROWS
+                .with_label_values(&["mysql", table_name])
+                .set(row_count);
 
             // Only drop if table is relatively small to avoid disrupting active monitoring
             if row_count < 100000 {
@@ -316,7 +343,9 @@ pub async fn test_rw_with_table(
         .fetch_optional(&mut conn)
         .await
     {
-        TABLE_SIZE_BYTES.with_label_values(&["mysql", table_name]).set(table_bytes);
+        TABLE_SIZE_BYTES
+            .with_label_values(&["mysql", table_name])
+            .set(table_bytes);
     }
 
     // Extract TLS metadata if TLS is enabled

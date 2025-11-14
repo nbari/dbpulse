@@ -37,9 +37,11 @@
 /// 2. Persistent failures cause explicit application termination (fail-fast)
 /// 3. Metrics always reflect accurate state
 /// 4. No silent failures occur
-
 use futures::FutureExt;
-use std::sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU32, Ordering},
+};
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -80,8 +82,15 @@ async fn test_panic_recovery_in_iteration() {
     let _ = timeout(Duration::from_secs(2), task).await;
 
     // Verify panic occurred but loop continued
-    assert!(panic_occurred.load(Ordering::SeqCst), "Panic should have occurred");
-    assert_eq!(iteration_count.load(Ordering::SeqCst), 5, "Should complete all 5 iterations despite panic");
+    assert!(
+        panic_occurred.load(Ordering::SeqCst),
+        "Panic should have occurred"
+    );
+    assert_eq!(
+        iteration_count.load(Ordering::SeqCst),
+        5,
+        "Should complete all 5 iterations despite panic"
+    );
 }
 
 #[tokio::test]
@@ -118,8 +127,16 @@ async fn test_multiple_panics_recovery() {
 
     let _ = timeout(Duration::from_secs(2), task).await;
 
-    assert_eq!(panic_count.load(Ordering::SeqCst), 4, "Should have 4 panics");
-    assert_eq!(iteration_count.load(Ordering::SeqCst), 10, "Should complete all iterations");
+    assert_eq!(
+        panic_count.load(Ordering::SeqCst),
+        4,
+        "Should have 4 panics"
+    );
+    assert_eq!(
+        iteration_count.load(Ordering::SeqCst),
+        10,
+        "Should complete all iterations"
+    );
 }
 
 #[tokio::test]
@@ -191,7 +208,10 @@ async fn test_graceful_shutdown_on_unsupported_driver() {
     let result = timeout(Duration::from_secs(1), rx.recv()).await;
 
     assert!(result.is_ok(), "Should receive shutdown signal");
-    assert!(result.unwrap().is_some(), "Shutdown signal should be received");
+    assert!(
+        result.unwrap().is_some(),
+        "Shutdown signal should be received"
+    );
 
     // Task should complete
     let _ = timeout(Duration::from_millis(100), task).await;
@@ -231,8 +251,16 @@ async fn test_concurrent_panic_and_success() {
 
     let _ = timeout(Duration::from_secs(2), task).await;
 
-    assert_eq!(success_count.load(Ordering::SeqCst), 10, "Should have 10 successes");
-    assert_eq!(panic_count.load(Ordering::SeqCst), 10, "Should have 10 panics");
+    assert_eq!(
+        success_count.load(Ordering::SeqCst),
+        10,
+        "Should have 10 successes"
+    );
+    assert_eq!(
+        panic_count.load(Ordering::SeqCst),
+        10,
+        "Should have 10 panics"
+    );
 }
 
 #[tokio::test]
@@ -262,7 +290,10 @@ async fn test_panic_in_async_context() {
 
     let _ = timeout(Duration::from_secs(1), task).await;
 
-    assert!(panic_caught.load(Ordering::SeqCst), "Should catch nested async panic");
+    assert!(
+        panic_caught.load(Ordering::SeqCst),
+        "Should catch nested async panic"
+    );
 }
 
 #[tokio::test]
@@ -329,8 +360,16 @@ async fn test_stress_rapid_iterations() {
     let result = timeout(Duration::from_secs(5), task).await;
 
     assert!(result.is_ok(), "Stress test should complete");
-    assert_eq!(total_iterations.load(Ordering::SeqCst), 1000, "All iterations should run");
-    assert_eq!(panic_recoveries.load(Ordering::SeqCst), 9, "Should recover from 9 panics");
+    assert_eq!(
+        total_iterations.load(Ordering::SeqCst),
+        1000,
+        "All iterations should run"
+    );
+    assert_eq!(
+        panic_recoveries.load(Ordering::SeqCst),
+        9,
+        "Should recover from 9 panics"
+    );
 }
 
 #[tokio::test]
@@ -367,7 +406,11 @@ async fn test_panic_with_state_corruption() {
     let _ = timeout(Duration::from_secs(2), task).await;
 
     // Final state should reflect all 10 increments
-    assert_eq!(state.load(Ordering::SeqCst), 10, "State should survive panics");
+    assert_eq!(
+        state.load(Ordering::SeqCst),
+        10,
+        "State should survive panics"
+    );
 }
 
 #[tokio::test]
@@ -379,13 +422,11 @@ async fn test_timeout_on_stuck_iteration() {
 
     let task = tokio::spawn(async move {
         // Iteration with timeout
-        let result = timeout(
-            Duration::from_millis(100),
-            async {
-                // Simulate stuck operation
-                tokio::time::sleep(Duration::from_secs(10)).await;
-            }
-        ).await;
+        let result = timeout(Duration::from_millis(100), async {
+            // Simulate stuck operation
+            tokio::time::sleep(Duration::from_secs(10)).await;
+        })
+        .await;
 
         if result.is_err() {
             // Timeout occurred - handle gracefully
@@ -395,7 +436,10 @@ async fn test_timeout_on_stuck_iteration() {
 
     let _ = timeout(Duration::from_secs(1), task).await;
 
-    assert!(completed.load(Ordering::SeqCst), "Should detect and handle timeout");
+    assert!(
+        completed.load(Ordering::SeqCst),
+        "Should detect and handle timeout"
+    );
 }
 
 #[tokio::test]
@@ -437,5 +481,8 @@ async fn test_shutdown_signal_propagation() {
 
     assert!(monitor_result.is_ok(), "Monitor should shutdown");
     assert!(server_result.is_ok(), "Server should shutdown");
-    assert!(!server_running.load(Ordering::SeqCst), "Server should be stopped");
+    assert!(
+        !server_running.load(Ordering::SeqCst),
+        "Server should be stopped"
+    );
 }

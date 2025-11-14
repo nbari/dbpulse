@@ -336,7 +336,6 @@ dependencies = [
  "clap",
  "dsn",
  "futures",
- "lazy_static",
  "openssl",
  "prometheus",
  "rand 0.9.2",

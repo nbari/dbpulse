@@ -19,117 +19,68 @@ environment var.
 
 ## Metrics
 
-dbpulse exposes Prometheus-compatible metrics on the `/metrics` endpoint to monitor database health, performance, and TLS connection status.
+dbpulse exposes comprehensive Prometheus-compatible metrics on the `/metrics` endpoint.
 
-### Core Metrics
+### Quick Reference
 
-#### `dbpulse_pulse`
-**Type:** Gauge
-**Description:** Database health status indicator
-- `1` - Database is healthy (read/write operations successful)
-- `0` - Database is unhealthy (read/write operations failed)
+| Metric | Type | Description |
+|--------|------|-------------|
+| `dbpulse_pulse` | Gauge | Health status (1=ok, 0=error) |
+| `dbpulse_runtime` | Histogram | Total operation latency |
+| `dbpulse_errors_total` | Counter | Errors by type (auth, timeout, connection, etc.) |
+| `dbpulse_operation_duration_seconds` | Histogram | Per-operation timing breakdown |
+| `dbpulse_connections_active` | Gauge | Currently active connections |
+| `dbpulse_iterations_total` | Counter | Success/error iteration counts |
+| `dbpulse_last_success_timestamp_seconds` | Gauge | Last successful check timestamp |
+| `dbpulse_rows_affected_total` | Counter | Rows affected by operations |
+| `dbpulse_table_size_bytes` | Gauge | Table size in bytes |
+| `dbpulse_database_readonly` | Gauge | Read-only mode (1=yes, 0=no) |
+| `dbpulse_tls_handshake_duration_seconds` | Histogram | TLS handshake timing |
+| `dbpulse_tls_info` | Gauge | TLS version and cipher info |
 
-**Use case:** Alert when database becomes unavailable for writes
+For complete documentation, PromQL examples, and alert rules, see [grafana/README.md](grafana/README.md).
+
+### Key Metrics Examples
+
 ```promql
-# Alert when database is down
-dbpulse_pulse == 0
+# Database health
+dbpulse_pulse
 
-# Alert when database has been down for 2 minutes
-dbpulse_pulse == 0 and avg_over_time(dbpulse_pulse[2m]) < 0.5
+# Success rate
+rate(dbpulse_iterations_total{status="success"}[5m]) /
+  rate(dbpulse_iterations_total[5m]) * 100
+
+# P99 latency
+histogram_quantile(0.99, rate(dbpulse_runtime_bucket[5m]))
+
+# Error rate by type
+rate(dbpulse_errors_total[5m])
+
+# Connection time
+rate(dbpulse_operation_duration_seconds_sum{operation="connect"}[5m]) /
+  rate(dbpulse_operation_duration_seconds_count{operation="connect"}[5m])
 ```
 
-#### `dbpulse_runtime`
-**Type:** Histogram
-**Description:** Latency of database read/write operations in seconds
-
-**Use case:** Monitor database performance and detect slowdowns
-```promql
-# Average latency over 5 minutes
-sum(rate(dbpulse_runtime_sum[5m])) / sum(rate(dbpulse_runtime_count[5m]))
-
-# 95th percentile latency
-histogram_quantile(0.95, rate(dbpulse_runtime_bucket[5m]))
-
-# Alert when latency exceeds 1 second
-sum(rate(dbpulse_runtime_sum[5m])) / sum(rate(dbpulse_runtime_count[5m])) > 1
-```
-
-### TLS Metrics
-
-#### `dbpulse_tls_info`
-**Type:** Gauge
-**Description:** TLS connection information (version, cipher)
-**Labels:** `database`, `version`, `cipher`
-**Value:** Always `1` when TLS connection is active
-
-**Use case:** Monitor TLS protocol versions and cipher suites
-```promql
-# Show active TLS versions
-dbpulse_tls_info{version=~"TLS.*"}
-
-# Alert on old TLS versions
-dbpulse_tls_info{version=~"TLSv1|TLSv1.1"} > 0
-```
-
-#### `dbpulse_tls_handshake_duration_seconds`
-**Type:** Histogram
-**Description:** TLS handshake duration in seconds
-**Labels:** `database`
-
-**Use case:** Monitor TLS handshake performance
-```promql
-# Average TLS handshake duration
-rate(dbpulse_tls_handshake_duration_seconds_sum[5m]) / rate(dbpulse_tls_handshake_duration_seconds_count[5m])
-```
-
-#### `dbpulse_tls_connection_errors_total`
-**Type:** Counter
-**Description:** Total TLS connection errors
-**Labels:** `database`, `error_type`
-
-**Use case:** Detect TLS certificate or configuration issues
-```promql
-# Rate of TLS errors
-rate(dbpulse_tls_connection_errors_total[5m])
-
-# Alert on TLS errors
-increase(dbpulse_tls_connection_errors_total[5m]) > 0
-```
-
-### Example Prometheus Alerts
+### Example Alerts
 
 ```yaml
-groups:
-  - name: dbpulse
-    rules:
-      # Database unavailable
-      - alert: DatabaseDown
-        expr: dbpulse_pulse == 0
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Database is unavailable"
-          description: "Database has been unavailable for 2 minutes"
+- alert: DatabaseDown
+  expr: dbpulse_pulse == 0
+  for: 2m
+  labels:
+    severity: critical
 
-      # High latency
-      - alert: DatabaseHighLatency
-        expr: sum(rate(dbpulse_runtime_sum[5m])) / sum(rate(dbpulse_runtime_count[5m])) > 1
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Database latency is high"
-          description: "Database operations are taking longer than 1 second"
+- alert: HighErrorRate
+  expr: rate(dbpulse_errors_total[5m]) > 0.1
+  for: 5m
+  labels:
+    severity: warning
 
-      # TLS errors
-      - alert: DatabaseTLSErrors
-        expr: increase(dbpulse_tls_connection_errors_total[5m]) > 0
-        labels:
-          severity: warning
-        annotations:
-          summary: "TLS connection errors detected"
-          description: "Database TLS connections are failing"
+- alert: NoRecentSuccess
+  expr: time() - dbpulse_last_success_timestamp_seconds > 300
+  for: 1m
+  labels:
+    severity: critical
 ```
 
 

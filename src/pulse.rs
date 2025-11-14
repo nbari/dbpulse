@@ -73,8 +73,8 @@ pub async fn start(
     let monitor_handle = task::spawn(async move { run_loop(dsn, interval, range, tls, tx).await });
 
     // Race between normal operation and monitoring task failure
-    let server = axum::serve(listener, app.into_make_service())
-        .with_graceful_shutdown(async move {
+    let server =
+        axum::serve(listener, app.into_make_service()).with_graceful_shutdown(async move {
             rx.recv().await;
         });
 
@@ -122,6 +122,105 @@ fn is_tls_error(error: &anyhow::Error) -> bool {
         || error_str.contains("Certificate")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+
+    #[test]
+    fn test_is_tls_error_lowercase_ssl() {
+        let error = anyhow!("Connection failed: ssl handshake error");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_tls_error_uppercase_ssl() {
+        let error = anyhow!("Connection failed: SSL handshake error");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_tls_error_lowercase_tls() {
+        let error = anyhow!("tls connection refused");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_tls_error_uppercase_tls() {
+        let error = anyhow!("TLS connection refused");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_tls_error_lowercase_certificate() {
+        let error = anyhow!("Invalid certificate chain");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_tls_error_uppercase_certificate() {
+        let error = anyhow!("Certificate verification failed");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_not_tls_error() {
+        let error = anyhow!("Connection timeout");
+        assert!(!is_tls_error(&error));
+
+        let error = anyhow!("Authentication failed");
+        assert!(!is_tls_error(&error));
+
+        let error = anyhow!("Database not found");
+        assert!(!is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_pulse_default() {
+        let pulse = Pulse::default();
+        assert_eq!(pulse.runtime_ms, 0);
+        assert_eq!(pulse.time, "");
+        assert_eq!(pulse.version, "");
+        assert!(pulse.tls_version.is_none());
+        assert!(pulse.tls_cipher.is_none());
+    }
+
+    #[test]
+    fn test_pulse_serialization() {
+        let pulse = Pulse {
+            runtime_ms: 123,
+            time: "2024-01-01T00:00:00Z".to_string(),
+            version: "PostgreSQL 15.0".to_string(),
+            tls_version: Some("TLSv1.3".to_string()),
+            tls_cipher: Some("AES256-GCM-SHA384".to_string()),
+        };
+
+        let json = serde_json::to_string(&pulse).unwrap();
+        assert!(json.contains("\"runtime_ms\":123"));
+        assert!(json.contains("\"version\":\"PostgreSQL 15.0\""));
+        assert!(json.contains("\"tls_version\":\"TLSv1.3\""));
+        assert!(json.contains("\"tls_cipher\":\"AES256-GCM-SHA384\""));
+    }
+
+    #[test]
+    fn test_pulse_serialization_without_tls() {
+        let pulse = Pulse {
+            runtime_ms: 50,
+            time: "2024-01-01T00:00:00Z".to_string(),
+            version: "MySQL 8.0".to_string(),
+            tls_version: None,
+            tls_cipher: None,
+        };
+
+        let json = serde_json::to_string(&pulse).unwrap();
+        assert!(json.contains("\"runtime_ms\":50"));
+        assert!(json.contains("\"version\":\"MySQL 8.0\""));
+        // These fields should be omitted when None (skip_serializing_if)
+        assert!(!json.contains("tls_version"));
+        assert!(!json.contains("tls_cipher"));
+    }
+}
+
 async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::UnboundedSender<()>) {
     loop {
         // Catch panics in individual iterations to keep loop alive
@@ -137,138 +236,172 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
 
             let db_driver = dsn.driver.as_str();
             match db_driver {
-            "postgres" | "postgresql" => match postgres::test_rw(&dsn, now, range, &tls).await {
-                Ok(result) => {
-                    pulse.version = result.version.clone();
-                    PULSE.set(1);
+                "postgres" | "postgresql" => {
+                    match postgres::test_rw(&dsn, now, range, &tls).await {
+                        Ok(result) => {
+                            pulse.version = result.version.clone();
+                            PULSE.set(1);
 
-                    // Record successful iteration
-                    ITERATIONS_TOTAL.with_label_values(&["postgres", "success"]).inc();
+                            // Record successful iteration
+                            ITERATIONS_TOTAL
+                                .with_label_values(&["postgres", "success"])
+                                .inc();
 
-                    // Record last success timestamp
-                    LAST_SUCCESS.with_label_values(&["postgres"]).set(now.timestamp());
+                            // Record last success timestamp
+                            LAST_SUCCESS
+                                .with_label_values(&["postgres"])
+                                .set(now.timestamp());
 
-                    // Check for read-only mode
-                    if result.version.contains("recovery mode") || result.version.contains("read-only") {
-                        DB_READONLY.with_label_values(&["postgres"]).set(1);
-                    } else {
-                        DB_READONLY.with_label_values(&["postgres"]).set(0);
-                    }
+                            // Check for read-only mode
+                            if result.version.contains("recovery mode")
+                                || result.version.contains("read-only")
+                            {
+                                DB_READONLY.with_label_values(&["postgres"]).set(1);
+                            } else {
+                                DB_READONLY.with_label_values(&["postgres"]).set(0);
+                            }
 
-                    // Record TLS metrics if available
-                    if let Some(ref metadata) = result.tls_metadata {
-                        pulse.tls_version = metadata.version.clone();
-                        pulse.tls_cipher = metadata.cipher.clone();
+                            // Record TLS metrics if available
+                            if let Some(ref metadata) = result.tls_metadata {
+                                pulse.tls_version = metadata.version.clone();
+                                pulse.tls_cipher = metadata.cipher.clone();
 
-                        // Update TLS info gauge
-                        if let (Some(version), Some(cipher)) = (&metadata.version, &metadata.cipher)
-                        {
-                            TLS_INFO
-                                .with_label_values(&["postgres", version.as_str(), cipher.as_str()])
-                                .set(1);
+                                // Update TLS info gauge
+                                if let (Some(version), Some(cipher)) =
+                                    (&metadata.version, &metadata.cipher)
+                                {
+                                    TLS_INFO
+                                        .with_label_values(&[
+                                            "postgres",
+                                            version.as_str(),
+                                            cipher.as_str(),
+                                        ])
+                                        .set(1);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            PULSE.set(0);
+                            eprintln!("{}", e);
+
+                            // Record failed iteration
+                            ITERATIONS_TOTAL
+                                .with_label_values(&["postgres", "error"])
+                                .inc();
+
+                            // Classify error type
+                            let error_str = format!("{:#}", e);
+                            let error_type = if error_str.contains("authentication")
+                                || error_str.contains("password")
+                            {
+                                "authentication"
+                            } else if error_str.contains("timeout") {
+                                "timeout"
+                            } else if error_str.contains("connection")
+                                || error_str.contains("refused")
+                            {
+                                "connection"
+                            } else if error_str.contains("transaction") {
+                                "transaction"
+                            } else {
+                                "query"
+                            };
+
+                            DB_ERRORS.with_label_values(&["postgres", error_type]).inc();
+
+                            // Record TLS error if it's SSL-related
+                            if tls.mode.is_enabled() && is_tls_error(&e) {
+                                TLS_CONNECTION_ERRORS
+                                    .with_label_values(&["postgres", "handshake"])
+                                    .inc();
+                            }
                         }
                     }
                 }
-                Err(e) => {
-                    PULSE.set(0);
-                    eprintln!("{}", e);
+                "mysql" => match mysql::test_rw(&dsn, now, range, &tls).await {
+                    Ok(result) => {
+                        pulse.version = result.version.clone();
+                        PULSE.set(1);
 
-                    // Record failed iteration
-                    ITERATIONS_TOTAL.with_label_values(&["postgres", "error"]).inc();
-
-                    // Classify error type
-                    let error_str = format!("{:#}", e);
-                    let error_type = if error_str.contains("authentication") || error_str.contains("password") {
-                        "authentication"
-                    } else if error_str.contains("timeout") {
-                        "timeout"
-                    } else if error_str.contains("connection") || error_str.contains("refused") {
-                        "connection"
-                    } else if error_str.contains("transaction") {
-                        "transaction"
-                    } else {
-                        "query"
-                    };
-
-                    DB_ERRORS.with_label_values(&["postgres", error_type]).inc();
-
-                    // Record TLS error if it's SSL-related
-                    if tls.mode.is_enabled() && is_tls_error(&e) {
-                        TLS_CONNECTION_ERRORS
-                            .with_label_values(&["postgres", "handshake"])
+                        // Record successful iteration
+                        ITERATIONS_TOTAL
+                            .with_label_values(&["mysql", "success"])
                             .inc();
-                    }
-                }
-            },
-            "mysql" => match mysql::test_rw(&dsn, now, range, &tls).await {
-                Ok(result) => {
-                    pulse.version = result.version.clone();
-                    PULSE.set(1);
 
-                    // Record successful iteration
-                    ITERATIONS_TOTAL.with_label_values(&["mysql", "success"]).inc();
+                        // Record last success timestamp
+                        LAST_SUCCESS
+                            .with_label_values(&["mysql"])
+                            .set(now.timestamp());
 
-                    // Record last success timestamp
-                    LAST_SUCCESS.with_label_values(&["mysql"]).set(now.timestamp());
+                        // Check for read-only mode
+                        if result.version.contains("read-only") {
+                            DB_READONLY.with_label_values(&["mysql"]).set(1);
+                        } else {
+                            DB_READONLY.with_label_values(&["mysql"]).set(0);
+                        }
 
-                    // Check for read-only mode
-                    if result.version.contains("read-only") {
-                        DB_READONLY.with_label_values(&["mysql"]).set(1);
-                    } else {
-                        DB_READONLY.with_label_values(&["mysql"]).set(0);
-                    }
+                        // Record TLS metrics if available
+                        if let Some(ref metadata) = result.tls_metadata {
+                            pulse.tls_version = metadata.version.clone();
+                            pulse.tls_cipher = metadata.cipher.clone();
 
-                    // Record TLS metrics if available
-                    if let Some(ref metadata) = result.tls_metadata {
-                        pulse.tls_version = metadata.version.clone();
-                        pulse.tls_cipher = metadata.cipher.clone();
-
-                        // Update TLS info gauge
-                        if let (Some(version), Some(cipher)) = (&metadata.version, &metadata.cipher)
-                        {
-                            TLS_INFO
-                                .with_label_values(&["mysql", version.as_str(), cipher.as_str()])
-                                .set(1);
+                            // Update TLS info gauge
+                            if let (Some(version), Some(cipher)) =
+                                (&metadata.version, &metadata.cipher)
+                            {
+                                TLS_INFO
+                                    .with_label_values(&[
+                                        "mysql",
+                                        version.as_str(),
+                                        cipher.as_str(),
+                                    ])
+                                    .set(1);
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    PULSE.set(0);
-                    eprintln!("{}", e);
+                    Err(e) => {
+                        PULSE.set(0);
+                        eprintln!("{}", e);
 
-                    // Record failed iteration
-                    ITERATIONS_TOTAL.with_label_values(&["mysql", "error"]).inc();
-
-                    // Classify error type
-                    let error_str = format!("{:#}", e);
-                    let error_type = if error_str.contains("authentication") || error_str.contains("password") || error_str.contains("Access denied") {
-                        "authentication"
-                    } else if error_str.contains("timeout") {
-                        "timeout"
-                    } else if error_str.contains("connection") || error_str.contains("refused") {
-                        "connection"
-                    } else if error_str.contains("transaction") {
-                        "transaction"
-                    } else {
-                        "query"
-                    };
-
-                    DB_ERRORS.with_label_values(&["mysql", error_type]).inc();
-
-                    // Record TLS error if it's SSL-related
-                    if tls.mode.is_enabled() && is_tls_error(&e) {
-                        TLS_CONNECTION_ERRORS
-                            .with_label_values(&["mysql", "handshake"])
+                        // Record failed iteration
+                        ITERATIONS_TOTAL
+                            .with_label_values(&["mysql", "error"])
                             .inc();
+
+                        // Classify error type
+                        let error_str = format!("{:#}", e);
+                        let error_type = if error_str.contains("authentication")
+                            || error_str.contains("password")
+                            || error_str.contains("Access denied")
+                        {
+                            "authentication"
+                        } else if error_str.contains("timeout") {
+                            "timeout"
+                        } else if error_str.contains("connection") || error_str.contains("refused")
+                        {
+                            "connection"
+                        } else if error_str.contains("transaction") {
+                            "transaction"
+                        } else {
+                            "query"
+                        };
+
+                        DB_ERRORS.with_label_values(&["mysql", error_type]).inc();
+
+                        // Record TLS error if it's SSL-related
+                        if tls.mode.is_enabled() && is_tls_error(&e) {
+                            TLS_CONNECTION_ERRORS
+                                .with_label_values(&["mysql", "handshake"])
+                                .inc();
+                        }
                     }
+                },
+                _ => {
+                    eprintln!("unsupported driver");
+                    let _ = tx.send(());
+                    return;
                 }
-            },
-            _ => {
-                eprintln!("unsupported driver");
-                let _ = tx.send(());
-                return;
             }
-        }
 
             timer.observe_duration();
 
