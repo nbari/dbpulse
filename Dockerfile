@@ -2,16 +2,10 @@
 # This creates a minimal container with just the binary
 
 # Stage 1: Build
-FROM --platform=$BUILDPLATFORM rust:1-slim AS builder
-
-ARG TARGETPLATFORM
-ARG BUILDPLATFORM
+FROM rust:1-alpine AS builder
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y \
-    musl-tools \
-    musl-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static
 
 WORKDIR /build
 
@@ -21,15 +15,16 @@ COPY Cargo.toml Cargo.lock ./
 # Copy source code
 COPY src ./src
 
-# Determine target architecture and build
-RUN case "$TARGETPLATFORM" in \
-      "linux/amd64") \
-        RUST_TARGET=x86_64-unknown-linux-musl ;; \
-      "linux/arm64") \
-        RUST_TARGET=aarch64-unknown-linux-musl ;; \
-      *) \
-        echo "Unsupported platform: $TARGETPLATFORM" && exit 1 ;; \
-    esac && \
+# Build for the native architecture (Docker buildx handles platform selection)
+# The rust image will be the correct architecture automatically
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then \
+        RUST_TARGET="x86_64-unknown-linux-musl"; \
+    elif [ "$ARCH" = "aarch64" ]; then \
+        RUST_TARGET="aarch64-unknown-linux-musl"; \
+    else \
+        echo "Unsupported architecture: $ARCH" && exit 1; \
+    fi && \
     rustup target add ${RUST_TARGET} && \
     cargo build --release --target ${RUST_TARGET} --locked && \
     strip /build/target/${RUST_TARGET}/release/dbpulse && \
