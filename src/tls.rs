@@ -33,13 +33,14 @@ impl FromStr for TlsMode {
             "require" => Ok(Self::Require),
             "verify-ca" => Ok(Self::VerifyCA),
             "verify-full" => Ok(Self::VerifyFull),
-            _ => Err(format!("Invalid TLS mode: {}", s)),
+            _ => Err(format!("Invalid TLS mode: {s}")),
         }
     }
 }
 
 impl TlsMode {
     /// Check if TLS is enabled
+    #[must_use]
     pub const fn is_enabled(&self) -> bool {
         !matches!(self, Self::Disable)
     }

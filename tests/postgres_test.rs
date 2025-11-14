@@ -20,8 +20,7 @@ async fn test_postgres_basic_connection() {
     let result = postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
     assert!(
         result.is_ok(),
-        "Failed to connect to PostgreSQL: {:?}",
-        result
+        "Failed to connect to PostgreSQL: {result:?}"
     );
 
     let health = result.unwrap();
@@ -45,9 +44,9 @@ async fn test_postgres_read_write_operations() {
 
     // Run test multiple times to ensure cleanup works
     for i in 0..5 {
-        let table_name = test_table_name(&format!("test_postgres_read_write_operations_{}", i));
+        let table_name = test_table_name(&format!("test_postgres_read_write_operations_{i}"));
         let result = postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
-        assert!(result.is_ok(), "Iteration {}: {:?}", i, result);
+        assert!(result.is_ok(), "Iteration {i}: {result:?}");
     }
 }
 
@@ -65,7 +64,7 @@ async fn test_postgres_transaction_rollback() {
 
     // This tests that transaction rollback works correctly
     let result = postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
-    assert!(result.is_ok(), "Transaction test failed: {:?}", result);
+    assert!(result.is_ok(), "Transaction test failed: {result:?}");
 }
 
 #[tokio::test]
@@ -79,7 +78,7 @@ async fn test_postgres_concurrent_connections() {
     // Each task gets its own table, eliminating all collision possibilities
     let mut handles = vec![];
     for i in 0..10 {
-        let table_name = test_table_name(&format!("test_postgres_concurrent_connections_{}", i));
+        let table_name = test_table_name(&format!("test_postgres_concurrent_connections_{i}"));
         let handle = tokio::spawn(async move {
             let dsn = parse_dsn(POSTGRES_DSN);
             let tls = TlsConfig::default();
@@ -92,7 +91,7 @@ async fn test_postgres_concurrent_connections() {
     // Wait for all to complete
     for handle in handles {
         let result = handle.await.expect("Task panicked");
-        assert!(result.is_ok(), "Concurrent test failed: {:?}", result);
+        assert!(result.is_ok(), "Concurrent test failed: {result:?}");
     }
 }
 
@@ -109,9 +108,9 @@ async fn test_postgres_with_different_ranges() {
 
     // Test different range values
     for range in [10, 50, 100, 500, 1000] {
-        let table_name = test_table_name(&format!("test_postgres_with_different_ranges_{}", range));
+        let table_name = test_table_name(&format!("test_postgres_with_different_ranges_{range}"));
         let result = postgres::test_rw_with_table(&dsn, now, range, &tls, &table_name).await;
-        assert!(result.is_ok(), "Range {} failed: {:?}", range, result);
+        assert!(result.is_ok(), "Range {range} failed: {result:?}");
     }
 }
 
@@ -123,7 +122,7 @@ async fn test_postgres_tls_disable() {
     }
 
     let result = test_postgres_with_tls(POSTGRES_DSN, TlsMode::Disable).await;
-    assert!(result.is_ok(), "TLS Disable failed: {:?}", result);
+    assert!(result.is_ok(), "TLS Disable failed: {result:?}");
 
     let health = result.unwrap();
     assert!(
@@ -157,7 +156,7 @@ async fn test_postgres_tls_require() {
         }
         Err(e) => {
             // Expected if PostgreSQL doesn't have TLS configured
-            println!("TLS test skipped (no TLS configured): {}", e);
+            println!("TLS test skipped (no TLS configured): {e}");
         }
     }
 }
@@ -175,11 +174,7 @@ async fn test_postgres_database_creation() {
     let result = test_postgres_connection_with_table(dsn_str, &table_name).await;
 
     // Should succeed by creating the database
-    assert!(
-        result.is_ok(),
-        "Database auto-creation failed: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "Database auto-creation failed: {result:?}");
 }
 
 #[tokio::test]

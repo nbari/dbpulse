@@ -12,13 +12,13 @@
 /// - `test_panic_with_state_corruption` - State integrity across panic boundaries
 /// - `test_stress_rapid_iterations` - 1000 iterations with periodic panics
 ///
-/// ### JoinHandle Monitoring (2 tests)
+/// ### `JoinHandle` Monitoring (2 tests)
 /// - `test_joinhandle_detects_task_exit` - Detection of unexpected task termination
 /// - `test_joinhandle_detects_panic` - Detection of panic in spawned task
 ///
 /// ### Shutdown & Coordination (3 tests)
 /// - `test_graceful_shutdown_on_unsupported_driver` - Shutdown signal propagation
-/// - `test_select_race_condition` - tokio::select! behavior with competing tasks
+/// - `test_select_race_condition` - `tokio::select!` behavior with competing tasks
 /// - `test_shutdown_signal_propagation` - Complete shutdown coordination
 ///
 /// ### Edge Cases (1 test)
@@ -111,7 +111,7 @@ async fn test_multiple_panics_recovery() {
                 // Panic on iterations 2, 3, 4, 7
                 if [2, 3, 4, 7].contains(&i) {
                     panic_clone.fetch_add(1, Ordering::SeqCst);
-                    panic!("Simulated panic #{}", i);
+                    panic!("Simulated panic #{i}");
                 }
 
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -164,7 +164,7 @@ async fn test_joinhandle_detects_task_exit() {
                     // Test passes if we reach here
                 }
                 Err(e) => {
-                    panic!("Task panicked: {}", e);
+                    panic!("Task panicked: {e}");
                 }
             }
         }
@@ -319,7 +319,7 @@ async fn test_select_race_condition() {
         _ = shutdown_rx.recv() => {
             "shutdown_received"
         }
-        _ = tokio::time::sleep(Duration::from_secs(1)) => {
+        () = tokio::time::sleep(Duration::from_secs(1)) => {
             server_clone.store(false, Ordering::SeqCst);
             "timeout"
         }
@@ -344,9 +344,7 @@ async fn test_stress_rapid_iterations() {
                 total_clone.fetch_add(1, Ordering::SeqCst);
 
                 // Panic every 100th iteration
-                if i % 100 == 0 && i > 0 {
-                    panic!("Stress test panic");
-                }
+                assert!(!(i % 100 == 0 && i > 0), "Stress test panic");
             })
             .catch_unwind()
             .await;
@@ -386,9 +384,7 @@ async fn test_panic_with_state_corruption() {
                 state_clone.store(current + 1, Ordering::SeqCst);
 
                 // Panic on iteration 5
-                if i == 5 {
-                    panic!("State corruption test");
-                }
+                assert!(i != 5, "State corruption test");
 
                 tokio::time::sleep(Duration::from_millis(5)).await;
             })
@@ -456,8 +452,8 @@ async fn test_shutdown_signal_propagation() {
     let monitor_task = tokio::spawn(async move {
         // Wait for shutdown
         tokio::select! {
-            _ = tokio::time::sleep(Duration::from_secs(10)) => {}
-            _ = async {
+            () = tokio::time::sleep(Duration::from_secs(10)) => {}
+            () = async {
                 while monitor_clone.load(Ordering::SeqCst) {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }

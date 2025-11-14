@@ -5,7 +5,12 @@ use clap::ArgMatches;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
-/// Convert ArgMatches into typed Action enum with validation
+/// Convert `ArgMatches` into typed Action enum with validation
+///
+/// # Errors
+///
+/// Returns an error if the DSN is invalid or required parameters are missing
+#[allow(clippy::needless_pass_by_value)]
 pub fn dispatch(matches: ArgMatches) -> Result<Action> {
     // Extract DSN
     let dsn_str = matches
@@ -21,7 +26,7 @@ pub fn dispatch(matches: ArgMatches) -> Result<Action> {
         .get_one::<String>("listen")
         .map(|addr| {
             addr.parse::<IpAddr>()
-                .with_context(|| format!("Invalid IP address: {}", addr))
+                .with_context(|| format!("Invalid IP address: {addr}"))
         })
         .transpose()?;
 

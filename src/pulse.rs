@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use tokio::{net::TcpListener, sync::mpsc, task, time};
 
-use crate::metrics::*;
+use crate::metrics::{
+    DB_ERRORS, DB_READONLY, ITERATIONS_TOTAL, LAST_SUCCESS, PANICS_RECOVERED, PULSE, RUNTIME,
+    TLS_CONNECTION_ERRORS, TLS_INFO, encode_metrics,
+};
 use crate::queries::{mysql, postgres};
 use crate::tls::TlsConfig;
 
@@ -42,19 +45,18 @@ pub async fn start(
     let (listener, bind_addr) = match listen {
         Some(addr) => {
             // Explicit address specified - bind to it
-            let socket_addr = format!("{}:{}", addr, port);
+            let socket_addr = format!("{addr}:{port}");
             let listener = TcpListener::bind(&socket_addr).await?;
             (listener, socket_addr)
         }
         None => {
             // Auto mode: try IPv6 first, fallback to IPv4
-            match TcpListener::bind(format!("::0:{port}")).await {
-                Ok(l) => (l, format!("[::]:{port}")),
-                Err(_) => {
-                    // Fallback to IPv4 if IPv6 fails
-                    let socket_addr = format!("0.0.0.0:{port}");
-                    (TcpListener::bind(&socket_addr).await?, socket_addr)
-                }
+            if let Ok(l) = TcpListener::bind(format!("::0:{port}")).await {
+                (l, format!("[::]:{port}"))
+            } else {
+                // Fallback to IPv4 if IPv6 fails
+                let socket_addr = format!("0.0.0.0:{port}");
+                (TcpListener::bind(&socket_addr).await?, socket_addr)
             }
         }
     };
@@ -89,8 +91,8 @@ pub async fn start(
                     anyhow::bail!("Monitoring loop stopped");
                 }
                 Err(e) => {
-                    eprintln!("Monitoring loop panicked: {}", e);
-                    anyhow::bail!("Monitoring loop panicked: {}", e);
+                    eprintln!("Monitoring loop panicked: {e}");
+                    anyhow::bail!("Monitoring loop panicked: {e}");
                 }
             }
         }
@@ -103,7 +105,7 @@ async fn metrics_handler() -> impl IntoResponse {
     match encode_metrics() {
         Ok(buffer) => (StatusCode::OK, buffer),
         Err(e) => {
-            eprintln!("{}", e);
+            eprintln!("{e}");
             (StatusCode::INTERNAL_SERVER_ERROR, Vec::new())
         }
     }
@@ -112,7 +114,7 @@ async fn metrics_handler() -> impl IntoResponse {
 /// Check if an error is TLS-related without multiple allocations
 #[inline]
 fn is_tls_error(error: &anyhow::Error) -> bool {
-    let error_str = format!("{:#}", error);
+    let error_str = format!("{error:#}");
     // Check both lowercase and uppercase variants to avoid to_lowercase() allocation
     error_str.contains("ssl")
         || error_str.contains("SSL")
@@ -122,6 +124,7 @@ fn is_tls_error(error: &anyhow::Error) -> bool {
         || error_str.contains("Certificate")
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::UnboundedSender<()>) {
     loop {
         // Catch panics in individual iterations to keep loop alive
@@ -140,7 +143,7 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                 "postgres" | "postgresql" => {
                     match postgres::test_rw(&dsn, now, range, &tls).await {
                         Ok(result) => {
-                            pulse.version = result.version.clone();
+                            result.version.clone_into(&mut pulse.version);
                             PULSE.set(1);
 
                             // Record successful iteration
@@ -164,8 +167,8 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
 
                             // Record TLS metrics if available
                             if let Some(ref metadata) = result.tls_metadata {
-                                pulse.tls_version = metadata.version.clone();
-                                pulse.tls_cipher = metadata.cipher.clone();
+                                metadata.version.clone_into(&mut pulse.tls_version);
+                                metadata.cipher.clone_into(&mut pulse.tls_cipher);
 
                                 // Update TLS info gauge
                                 if let (Some(version), Some(cipher)) =
@@ -183,7 +186,7 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                         }
                         Err(e) => {
                             PULSE.set(0);
-                            eprintln!("{}", e);
+                            eprintln!("{e}");
 
                             // Record failed iteration
                             ITERATIONS_TOTAL
@@ -191,7 +194,7 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                                 .inc();
 
                             // Classify error type
-                            let error_str = format!("{:#}", e);
+                            let error_str = format!("{e:#}");
                             let error_type = if error_str.contains("authentication")
                                 || error_str.contains("password")
                             {
@@ -221,7 +224,7 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                 }
                 "mysql" => match mysql::test_rw(&dsn, now, range, &tls).await {
                     Ok(result) => {
-                        pulse.version = result.version.clone();
+                        result.version.clone_into(&mut pulse.version);
                         PULSE.set(1);
 
                         // Record successful iteration
@@ -243,8 +246,8 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
 
                         // Record TLS metrics if available
                         if let Some(ref metadata) = result.tls_metadata {
-                            pulse.tls_version = metadata.version.clone();
-                            pulse.tls_cipher = metadata.cipher.clone();
+                            metadata.version.clone_into(&mut pulse.tls_version);
+                            metadata.cipher.clone_into(&mut pulse.tls_cipher);
 
                             // Update TLS info gauge
                             if let (Some(version), Some(cipher)) =
@@ -262,7 +265,7 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                     }
                     Err(e) => {
                         PULSE.set(0);
-                        eprintln!("{}", e);
+                        eprintln!("{e}");
 
                         // Record failed iteration
                         ITERATIONS_TOTAL
@@ -270,7 +273,7 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                             .inc();
 
                         // Classify error type
-                        let error_str = format!("{:#}", e);
+                        let error_str = format!("{e:#}");
                         let error_type = if error_str.contains("authentication")
                             || error_str.contains("password")
                             || error_str.contains("Access denied")
@@ -311,12 +314,13 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
             pulse.runtime_ms = runtime.num_milliseconds();
 
             if let Ok(serialized) = serde_json::to_string(&pulse) {
-                println!("{}", serialized);
+                println!("{serialized}");
             }
 
             // Sleep for remaining interval time to maintain fixed interval
             if let Some(remaining) = wait_time.checked_sub(&runtime) {
-                let seconds_to_wait = remaining.num_seconds() as u64;
+                #[allow(clippy::cast_sign_loss)]
+                let seconds_to_wait = remaining.num_seconds().max(0) as u64;
                 if seconds_to_wait > 0 {
                     time::sleep(time::Duration::from_secs(seconds_to_wait)).await;
                 }
@@ -327,7 +331,7 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
 
         // Handle panics in iteration gracefully
         if let Err(panic_info) = iteration_result {
-            eprintln!("Panic in monitoring loop iteration: {:?}", panic_info);
+            eprintln!("Panic in monitoring loop iteration: {panic_info:?}");
             PULSE.set(0); // Mark as unhealthy
             PANICS_RECOVERED.inc(); // Track panic recovery
             // Sleep for the interval before retrying

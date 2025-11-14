@@ -5,6 +5,7 @@ use clap::{
 
 /// Pure clap command definitions with zero business logic
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn new() -> Command {
     let styles = Styles::styled()
         .header(AnsiColor::Yellow.on_default() | Effects::BOLD)

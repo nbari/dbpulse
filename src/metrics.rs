@@ -182,13 +182,17 @@ pub static DB_READONLY: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 });
 
 /// Encode and return metrics for HTTP export
+///
+/// # Errors
+///
+/// Returns an error if metrics encoding fails
 pub fn encode_metrics() -> Result<Vec<u8>, String> {
     let mut buffer = Vec::new();
     let encoder = prometheus::TextEncoder::new();
 
     encoder
         .encode(&REGISTRY.gather(), &mut buffer)
-        .map_err(|e| format!("could not encode custom metrics: {}", e))?;
+        .map_err(|e| format!("could not encode custom metrics: {e}"))?;
 
     Ok(buffer)
 }
@@ -228,7 +232,7 @@ mod tests {
             .inc();
         LAST_SUCCESS
             .with_label_values(&["postgres"])
-            .set(1234567890);
+            .set(1_234_567_890);
         TABLE_SIZE_BYTES
             .with_label_values(&["postgres", "dbpulse_rw"])
             .set(1024);

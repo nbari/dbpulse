@@ -17,6 +17,11 @@ use crate::metrics::{
 };
 use crate::tls::{TlsConfig, TlsMetadata, TlsMode};
 
+/// Test read/write operations on the default table
+///
+/// # Errors
+///
+/// Returns an error if database connection or operations fail
 pub async fn test_rw(
     dsn: &DSN,
     now: DateTime<Utc>,
@@ -26,6 +31,12 @@ pub async fn test_rw(
     test_rw_with_table(dsn, now, range, tls, "dbpulse_rw").await
 }
 
+/// Test read/write operations on a specified table
+///
+/// # Errors
+///
+/// Returns an error if database connection or operations fail
+#[allow(clippy::too_many_lines)]
 pub async fn test_rw_with_table(
     dsn: &DSN,
     now: DateTime<Utc>,
@@ -88,8 +99,8 @@ pub async fn test_rw_with_table(
             }
             conn
         }
-        Err(err) => match err {
-            sqlx::Error::Database(db_err) => {
+        Err(err) => {
+            if let sqlx::Error::Database(db_err) = err {
                 if db_err
                     .as_error()
                     .downcast_ref::<MySqlDatabaseError>()
@@ -121,12 +132,11 @@ pub async fn test_rw_with_table(
                     CONNECTIONS_ACTIVE.dec();
                     return Err(db_err.into());
                 }
-            }
-            _ => {
+            } else {
                 CONNECTIONS_ACTIVE.dec();
                 return Err(err.into());
             }
-        },
+        }
     };
 
     // Get database version
@@ -136,12 +146,22 @@ pub async fn test_rw_with_table(
         .context("Failed to fetch database version")?;
 
     // check if db is in read-only mode
-    let is_read_only: (String,) = sqlx::query_as("SELECT @@read_only;")
+    // Use raw Row to handle both MariaDB (returns integer) and MySQL (may return string/integer)
+    let row = sqlx::query("SELECT @@read_only;")
         .fetch_one(&mut conn)
         .await
         .context("Failed to check if the database is in read-only mode")?;
 
-    if is_read_only.0.to_uppercase() == "ON" || is_read_only.0 == "1" {
+    // Try to get as i64 first (MariaDB), fallback to string
+    let is_read_only = row.try_get::<i64, _>(0).map_or_else(
+        |_| {
+            row.try_get::<String, _>(0)
+                .is_ok_and(|val| val.to_uppercase() == "ON" || val == "1")
+        },
+        |val| val != 0,
+    );
+
+    if is_read_only {
         let tls_metadata = if tls.mode.is_enabled() {
             extract_tls_metadata(&mut conn).await.ok()
         } else {
@@ -158,8 +178,8 @@ pub async fn test_rw_with_table(
 
     // create table with optimized schema
     let create_table_sql = format!(
-        r#"
-        CREATE TABLE IF NOT EXISTS {} (
+        r"
+        CREATE TABLE IF NOT EXISTS {table_name} (
             id INT NOT NULL,
             t1 BIGINT NOT NULL,
             t2 TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -168,8 +188,7 @@ pub async fn test_rw_with_table(
             UNIQUE KEY(uuid),
             INDEX idx_t2 (t2)
         ) ENGINE=InnoDB
-        "#,
-        table_name
+        "
     );
 
     let create_table_timer = Instant::now();
@@ -184,13 +203,12 @@ pub async fn test_rw_with_table(
 
     // SQL Query
     let insert_sql = format!(
-        r#"
-        INSERT INTO {} (id, t1, uuid)
+        r"
+        INSERT INTO {table_name} (id, t1, uuid)
         VALUES (?, ?, ?)
         ON DUPLICATE KEY UPDATE
         t1 = VALUES(t1), uuid = VALUES(uuid)
-        "#,
-        table_name
+        "
     );
     let insert_timer = Instant::now();
     let insert_result = sqlx::query(&insert_sql)
@@ -208,12 +226,11 @@ pub async fn test_rw_with_table(
 
     // Check if stored record matches
     let select_sql = format!(
-        r#"
+        r"
         SELECT t1, uuid
-        FROM {}
+        FROM {table_name}
         WHERE id = ?
-        "#,
-        table_name
+        "
     );
     let select_timer = Instant::now();
     let row: Option<(i64, String)> = sqlx::query_as(&select_sql)
@@ -239,15 +256,14 @@ pub async fn test_rw_with_table(
 
     // Test transaction rollback with a unique ID to avoid conflicts with parallel tests
     // Use timestamp-based ID that won't conflict with normal operations
-    let rollback_test_id = (now.timestamp_micros() % 2147483647) as i32;
+    let rollback_test_id = (now.timestamp_micros() % 2_147_483_647) as i32;
 
     let transaction_timer = Instant::now();
     let mut tx = conn.begin().await?;
 
     // Insert a test record
     let insert_tx_sql = format!(
-        "INSERT INTO {} (id, t1, uuid) VALUES (?, 999, UUID()) ON DUPLICATE KEY UPDATE t1 = 999",
-        table_name
+        "INSERT INTO {table_name} (id, t1, uuid) VALUES (?, 999, UUID()) ON DUPLICATE KEY UPDATE t1 = 999"
     );
     sqlx::query(&insert_tx_sql)
         .bind(rollback_test_id)
@@ -255,7 +271,7 @@ pub async fn test_rw_with_table(
         .await?;
 
     // Update it within the transaction
-    let update_tx_sql = format!("UPDATE {} SET t1 = ? WHERE id = ?", table_name);
+    let update_tx_sql = format!("UPDATE {table_name} SET t1 = ? WHERE id = ?");
     sqlx::query(&update_tx_sql)
         .bind(0)
         .bind(rollback_test_id)
@@ -263,7 +279,7 @@ pub async fn test_rw_with_table(
         .await?;
 
     // Verify the update
-    let select_tx_sql = format!("SELECT t1 FROM {} WHERE id = ?", table_name);
+    let select_tx_sql = format!("SELECT t1 FROM {table_name} WHERE id = ?");
     let updated_value: Option<i64> = sqlx::query_scalar(&select_tx_sql)
         .bind(rollback_test_id)
         .fetch_optional(tx.as_mut())
@@ -271,8 +287,7 @@ pub async fn test_rw_with_table(
 
     if updated_value != Some(0) {
         return Err(anyhow!(
-            "Transaction update failed: expected 0, got {:?}",
-            updated_value
+            "Transaction update failed: expected 0, got {updated_value:?}"
         ));
     }
 
@@ -280,7 +295,7 @@ pub async fn test_rw_with_table(
     tx.rollback().await?;
 
     // Verify the rollback worked (value should be 999 or record not exist)
-    let select_rollback_sql = format!("SELECT t1 FROM {} WHERE id = ?", table_name);
+    let select_rollback_sql = format!("SELECT t1 FROM {table_name} WHERE id = ?");
     let rolled_back_value: Option<i64> = sqlx::query_scalar(&select_rollback_sql)
         .bind(rollback_test_id)
         .fetch_optional(&mut conn)
@@ -298,7 +313,7 @@ pub async fn test_rw_with_table(
     // Delete records older than 1 hour (keeps table size bounded)
     // Use LIMIT to avoid long-running DELETE operations that could block other queries
     let one_hour_ago = (now - chrono::Duration::hours(1)).to_rfc3339();
-    let delete_old_sql = format!("DELETE FROM {} WHERE t2 < ? LIMIT 10000", table_name);
+    let delete_old_sql = format!("DELETE FROM {table_name} WHERE t2 < ? LIMIT 10000");
     let cleanup_timer = Instant::now();
     if let Ok(delete_result) = sqlx::query(&delete_old_sql)
         .bind(one_hour_ago)
@@ -318,7 +333,7 @@ pub async fn test_rw_with_table(
     // Only drop if we're sure it's safe (check table size first)
     if now.minute() == 0 && id < 5 {
         // Check table size before dropping - only drop if it has fewer than 100k rows
-        let count_sql = format!("SELECT COUNT(*) FROM {}", table_name);
+        let count_sql = format!("SELECT COUNT(*) FROM {table_name}");
         if let Ok(Some(row_count)) = sqlx::query_scalar::<_, i64>(&count_sql)
             .fetch_optional(&mut conn)
             .await
@@ -329,8 +344,8 @@ pub async fn test_rw_with_table(
                 .set(row_count);
 
             // Only drop if table is relatively small to avoid disrupting active monitoring
-            if row_count < 100000 {
-                let drop_table_sql = format!("DROP TABLE IF EXISTS {}", table_name);
+            if row_count < 100_000 {
+                let drop_table_sql = format!("DROP TABLE IF EXISTS {table_name}");
                 sqlx::query(&drop_table_sql).execute(&mut conn).await.ok();
             }
         }
@@ -366,7 +381,7 @@ pub async fn test_rw_with_table(
     })
 }
 
-/// Extract TLS metadata from MySQL connection
+/// Extract TLS metadata from `MySQL` connection
 async fn extract_tls_metadata(conn: &mut sqlx::MySqlConnection) -> Result<TlsMetadata> {
     // Query SSL status variables
     let rows = sqlx::query("SHOW STATUS LIKE 'Ssl%'")

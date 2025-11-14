@@ -104,7 +104,7 @@ pub fn test_table_name(test_name: &str) -> String {
     let thread_id = std::thread::current().id();
     let mut hasher = DefaultHasher::new();
     test_name.hash(&mut hasher);
-    format!("{:?}", thread_id).hash(&mut hasher);
+    format!("{thread_id:?}").hash(&mut hasher);
 
     format!("dbpulse_rw_test_{:x}", hasher.finish())
 }
