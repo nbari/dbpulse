@@ -281,7 +281,7 @@ mod tests {
     fn test_encode_metrics() {
         // Initialize at least one metric to ensure non-empty output
         PANICS_RECOVERED.inc();
-        
+
         // Ensure metrics can be encoded without error
         let result = encode_metrics();
         assert!(result.is_ok());
