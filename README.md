@@ -4,29 +4,12 @@
 
 # dbpulse
 
-**v0.6.0 Major Release** - Complete metrics overhaul with 11 new metrics, 23 new tests, and comprehensive documentation!
-
 `dbpulse` will run a set of queries in a defined interval, in order to
 dynamically test if the database is available mainly for writes, it exposes a
 `/metrics` endpoint the one can be used together with `Prometheus` and create
 alerts when the database is not available, this is to cover HALT/LOCK cases in
 Galera clusters in where a `DDL` could stale the whole cluster or flow-control
 kicks in and the database could not be receiving `COMMITS/WRITE`.
-
-## What's New in v0.6.0
-
-🎉 **Major Release Highlights:**
-
-- **11 New Prometheus Metrics** - Comprehensive observability with error classification, operation timing, connection tracking, and more
-- **23 New Unit Tests** - Improved code coverage from 27.74% to 45.08%
-- **Grafana Dashboard Rewrite** - 18 panels organized into 5 logical sections
-- **643-line Metrics Documentation** - Complete PromQL examples and alert rules in `grafana/README.md`
-- **Dependency Reduction** - Replaced `lazy_static` with `std::sync::LazyLock` (Rust 1.80+)
-- **Enhanced Error Detection** - Errors classified by type (auth, timeout, connection, transaction, query)
-- **Operation-Level Timing** - Track performance of connect, insert, select, and cleanup operations
-
-See [CHANGELOG.md](CHANGELOG.md) for complete details.
-
 
 ## How to use it
 
@@ -150,30 +133,8 @@ podman run -p 9300:9300 ghcr.io/nbari/dbpulse:latest \
   --listen "0.0.0.0:9300"
 ```
 
-### Available tags
-
-- `latest` - Latest stable release
-- `x.y.z` - Specific version (e.g., `0.6.0`)
-- `x.y` - Minor version (e.g., `0.6`)
-- `x` - Major version (e.g., `0`)
-
 ### Multi-architecture support
 
 Images are built for:
 - `linux/amd64` - x86_64 architecture
 - `linux/arm64` - ARM64 architecture (AWS Graviton, Raspberry Pi, etc.)
-
-## rpm
-
-To create an RPM package:
-
-```sh
-just rpm
-```
-> you need to have `just` installed and docker running
-
-Then you need to copy the `dbpulse*.x86_64.rpm`:
-
-```sh
-cp target/generate-rpm/dbpulse-*-x86_64.rpm /host
-```
