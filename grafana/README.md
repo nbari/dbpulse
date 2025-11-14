@@ -10,118 +10,437 @@ This directory contains the Grafana dashboard for monitoring DBPulse metrics.
 4. Select your Prometheus datasource
 5. Click Import
 
-## Dashboard Panels
+## Quick Start
 
-### 1. Database Health Status
-**Type:** Gauge
-**Metric:** `dbpuse_pulse`
-**Description:** Current health status of the database
-- Green (1) = Database is healthy
-- Red (0) = Database is experiencing errors
+The dashboard provides comprehensive monitoring of database health, performance, and operational metrics:
 
-### 2. Database Pulse Latency
-**Type:** Time Series
-**Metrics:**
-- `dbpulse_runtime_sum` / `dbpulse_runtime_count` (Average)
-- `histogram_quantile(0.99, dbpulse_runtime_bucket)` (P99)
-- `histogram_quantile(0.95, dbpulse_runtime_bucket)` (P95)
-- `histogram_quantile(0.50, dbpulse_runtime_bucket)` (P50)
+- **Health Status** - Real-time database availability
+- **Performance Metrics** - Latency breakdown by operation
+- **Error Tracking** - Detailed error classification
+- **Connection Monitoring** - Active connections and lifecycle
+- **Resource Usage** - Table size and row count tracking
+- **TLS Security** - Handshake performance and error tracking
 
-**Description:** Database health check latency over time, showing:
-- Average latency
-- P99 (99th percentile) - worst case scenarios
-- P95 (95th percentile) - typical worst case
-- P50 (50th percentile) - median latency
+---
 
-### 3. TLS Handshake Duration
-**Type:** Time Series
-**Metric:** `dbpulse_tls_handshake_duration_seconds`
-**Labels:** `database` (postgres, mysql)
-**Description:** TLS/SSL handshake duration per database type
-- Average handshake time
-- P99 handshake time
-- Useful for detecting SSL performance issues
+## Complete Metrics Reference
 
-### 4. TLS Connection Errors Rate
-**Type:** Time Series (Stacked)
-**Metric:** `dbpulse_tls_connection_errors_total`
-**Labels:** `database`, `error_type`
-**Description:** Rate of TLS connection errors over time
-- Stacked view shows total error rate
-- Broken down by database and error type
-- Useful for detecting intermittent SSL handshake failures
+### Core Health Metrics
 
-### 5. TLS Connection Info
-**Type:** Bar Gauge
-**Metric:** `dbpulse_tls_info`
-**Labels:** `database`, `version`, `cipher`
-**Description:** Current TLS connection information
-- Shows active TLS version (TLSv1.2, TLSv1.3, etc.)
-- Shows cipher suite in use
-- Broken down by database type
+#### `dbpuse_pulse` (Gauge)
+**Description:** Binary health indicator
+- `1` = Database is healthy (read/write operations successful)
+- `0` = Database is unhealthy (errors detected)
 
-### 6. TLS Connection Errors Total
-**Type:** Bar Gauge
-**Metric:** `dbpulse_tls_connection_errors_total`
-**Labels:** `database`, `error_type`
-**Description:** Total count of TLS connection errors
-- Cumulative error count
-- Broken down by database and error type
+**Use Case:** Primary health signal for alerts
 
-### 7. Health Check Rate
-**Type:** Time Series
-**Metric:** `rate(dbpulse_runtime_count[5m])`
-**Description:** Rate of health checks per second
-- Shows how frequently DBPulse is checking the database
-- Should match configured interval
+**Query Examples:**
+```promql
+# Current health status
+dbpuse_pulse
 
-## Metrics Reference
+# Uptime percentage over last 24h
+avg_over_time(dbpuse_pulse[24h]) * 100
+```
 
-### Core Metrics
+#### `dbpulse_runtime` (Histogram)
+**Description:** Total duration of complete health check cycle (in seconds)
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `dbpuse_pulse` | Gauge | Health status (1=ok, 0=error) |
-| `dbpulse_runtime` | Histogram | Health check latency in seconds |
-| `dbpulse_runtime_bucket` | Histogram Bucket | Latency distribution buckets |
-| `dbpulse_runtime_sum` | Counter | Total latency sum |
-| `dbpulse_runtime_count` | Counter | Total health checks |
+**Buckets:** Default Prometheus histogram buckets
 
-### TLS Metrics
+**Query Examples:**
+```promql
+# Average latency
+rate(dbpulse_runtime_sum[5m]) / rate(dbpulse_runtime_count[5m])
 
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `dbpulse_tls_handshake_duration_seconds` | Histogram | `database` | TLS handshake duration |
-| `dbpulse_tls_connection_errors_total` | Counter | `database`, `error_type` | TLS connection errors |
-| `dbpulse_tls_info` | Gauge | `database`, `version`, `cipher` | TLS connection info |
+# P99 latency
+histogram_quantile(0.99, rate(dbpulse_runtime_bucket[5m]))
 
-## Alert Examples
+# P95 latency
+histogram_quantile(0.95, rate(dbpulse_runtime_bucket[5m]))
 
-### High Latency Alert
+# P50 latency (median)
+histogram_quantile(0.50, rate(dbpulse_runtime_bucket[5m]))
+```
+
+---
+
+### Error Classification Metrics
+
+#### `dbpulse_errors_total` (Counter)
+**Labels:** `database` (postgres/mysql), `error_type`
+
+**Error Types:**
+- `authentication` - Invalid credentials or authentication failures
+- `timeout` - Query timeouts
+- `connection` - Connection establishment failures
+- `transaction` - Transaction rollback or consistency errors
+- `query` - SQL execution errors
+
+**Query Examples:**
+```promql
+# Total error rate by type
+rate(dbpulse_errors_total[5m])
+
+# Authentication errors for PostgreSQL
+rate(dbpulse_errors_total{database="postgres",error_type="authentication"}[5m])
+
+# Error breakdown by type
+sum by (error_type) (rate(dbpulse_errors_total[5m]))
+
+# Connection error percentage
+rate(dbpulse_errors_total{error_type="connection"}[5m]) /
+  rate(dbpulse_iterations_total[5m]) * 100
+```
+
+---
+
+### Operation Performance Metrics
+
+#### `dbpulse_operation_duration_seconds` (Histogram)
+**Labels:** `database` (postgres/mysql), `operation`
+
+**Operations:**
+- `connect` - Database connection establishment
+- `create_table` - Table creation/verification
+- `insert` - INSERT or UPSERT operations
+- `select` - SELECT query verification
+- `transaction_test` - Transaction rollback test
+- `cleanup` - Old record deletion
+
+**Query Examples:**
+```promql
+# Average duration by operation
+rate(dbpulse_operation_duration_seconds_sum[5m]) /
+  rate(dbpulse_operation_duration_seconds_count[5m])
+
+# Slow INSERT operations (P99)
+histogram_quantile(0.99,
+  rate(dbpulse_operation_duration_seconds_bucket{operation="insert"}[5m]))
+
+# Connection establishment time
+rate(dbpulse_operation_duration_seconds_sum{operation="connect"}[5m]) /
+  rate(dbpulse_operation_duration_seconds_count{operation="connect"}[5m])
+
+# Cleanup operation duration (to detect slow DELETEs)
+histogram_quantile(0.95,
+  rate(dbpulse_operation_duration_seconds_bucket{operation="cleanup"}[5m]))
+```
+
+---
+
+### Connection Lifecycle Metrics
+
+#### `dbpulse_connections_active` (Gauge)
+**Description:** Currently active database connections
+
+**Expected Value:** Typically `0` or `1` (connections are opened and closed per iteration)
+
+**Query Examples:**
+```promql
+# Current active connections
+dbpulse_connections_active
+
+# Alert if connection held too long
+dbpulse_connections_active > 0
+```
+
+#### `dbpulse_connection_duration_seconds` (Histogram)
+**Description:** Total time connection is held open
+
+**Query Examples:**
+```promql
+# Average connection hold time
+rate(dbpulse_connection_duration_seconds_sum[5m]) /
+  rate(dbpulse_connection_duration_seconds_count[5m])
+
+# P99 connection duration
+histogram_quantile(0.99, rate(dbpulse_connection_duration_seconds_bucket[5m]))
+```
+
+---
+
+### Data Modification Tracking
+
+#### `dbpulse_rows_affected_total` (Counter)
+**Labels:** `database` (postgres/mysql), `operation` (insert/delete)
+
+**Description:** Total rows affected by write operations
+
+**Query Examples:**
+```promql
+# Insert rate
+rate(dbpulse_rows_affected_total{operation="insert"}[5m])
+
+# Delete rate (cleanup)
+rate(dbpulse_rows_affected_total{operation="delete"}[5m])
+
+# Rows deleted per cleanup cycle
+increase(dbpulse_rows_affected_total{operation="delete"}[1h])
+```
+
+---
+
+### Iteration and Success Tracking
+
+#### `dbpulse_iterations_total` (Counter)
+**Labels:** `database` (postgres/mysql), `status` (success/error)
+
+**Description:** Total monitoring iterations
+
+**Query Examples:**
+```promql
+# Success rate
+rate(dbpulse_iterations_total{status="success"}[5m]) /
+  rate(dbpulse_iterations_total[5m]) * 100
+
+# Error rate
+rate(dbpulse_iterations_total{status="error"}[5m])
+
+# Total iterations
+sum(rate(dbpulse_iterations_total[5m]))
+```
+
+#### `dbpulse_last_success_timestamp_seconds` (Gauge)
+**Labels:** `database` (postgres/mysql)
+
+**Description:** Unix timestamp of last successful health check
+
+**Query Examples:**
+```promql
+# Time since last success (in minutes)
+(time() - dbpulse_last_success_timestamp_seconds) / 60
+
+# Alert if no success in 5 minutes
+time() - dbpulse_last_success_timestamp_seconds > 300
+```
+
+---
+
+### Table Size Monitoring
+
+#### `dbpulse_table_size_bytes` (Gauge)
+**Labels:** `database` (postgres/mysql), `table`
+
+**Description:** Approximate table size in bytes
+
+**Query Examples:**
+```promql
+# Current table size in MB
+dbpulse_table_size_bytes / 1024 / 1024
+
+# Table growth rate (bytes per second)
+rate(dbpulse_table_size_bytes[1h])
+
+# Alert if table growing too fast
+rate(dbpulse_table_size_bytes[1h]) > 1000000  # 1MB/s
+```
+
+#### `dbpulse_table_rows` (Gauge)
+**Labels:** `database` (postgres/mysql), `table`
+
+**Description:** Approximate row count
+
+**Query Examples:**
+```promql
+# Current row count
+dbpulse_table_rows
+
+# Row growth rate
+rate(dbpulse_table_rows[1h])
+
+# Alert if cleanup not working (unbounded growth)
+rate(dbpulse_table_rows[1h]) > 1000
+```
+
+---
+
+### Reliability Metrics
+
+#### `dbpulse_panics_recovered_total` (Counter)
+**Description:** Total panics recovered from in monitoring loop
+
+**Query Examples:**
+```promql
+# Panic rate
+rate(dbpulse_panics_recovered_total[5m])
+
+# Total panics in last 24h
+increase(dbpulse_panics_recovered_total[24h])
+```
+
+#### `dbpulse_database_readonly` (Gauge)
+**Labels:** `database` (postgres/mysql)
+
+**Description:** Database read-only status
+- `1` = Database in read-only mode (recovery/replica)
+- `0` = Database in read-write mode
+
+**Query Examples:**
+```promql
+# Current read-only status
+dbpulse_database_readonly
+
+# Alert on failover/replica promotion
+changes(dbpulse_database_readonly[5m]) > 0
+```
+
+---
+
+### TLS/SSL Metrics
+
+#### `dbpulse_tls_handshake_duration_seconds` (Histogram)
+**Labels:** `database` (postgres/mysql)
+
+**Description:** TLS handshake duration (connection establishment time when TLS enabled)
+
+**Query Examples:**
+```promql
+# Average TLS handshake time
+rate(dbpulse_tls_handshake_duration_seconds_sum[5m]) /
+  rate(dbpulse_tls_handshake_duration_seconds_count[5m])
+
+# P99 TLS handshake
+histogram_quantile(0.99,
+  rate(dbpulse_tls_handshake_duration_seconds_bucket[5m]))
+```
+
+#### `dbpulse_tls_connection_errors_total` (Counter)
+**Labels:** `database` (postgres/mysql), `error_type` (handshake)
+
+**Description:** TLS-specific connection errors
+
+**Query Examples:**
+```promql
+# TLS error rate
+rate(dbpulse_tls_connection_errors_total[5m])
+
+# TLS errors by database
+sum by (database) (rate(dbpulse_tls_connection_errors_total[5m]))
+```
+
+#### `dbpulse_tls_info` (Gauge)
+**Labels:** `database` (postgres/mysql), `version` (TLSv1.2/TLSv1.3), `cipher`
+
+**Description:** TLS connection information (value always `1`)
+
+**Query Examples:**
+```promql
+# Current TLS version
+dbpulse_tls_info
+
+# TLS version breakdown
+sum by (version) (dbpulse_tls_info)
+```
+
+---
+
+## Alert Rules
+
+### Critical Alerts
+
+#### Database Down
 ```yaml
-- alert: DBPulseHighLatency
+- alert: DatabaseDown
+  expr: dbpuse_pulse == 0
+  for: 2m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Database is down"
+    description: "DBPulse reports database unhealthy for 2 minutes"
+```
+
+#### Database Check Stale
+```yaml
+- alert: DatabaseCheckStale
+  expr: time() - dbpulse_last_success_timestamp_seconds > 300
+  for: 1m
+  labels:
+    severity: critical
+  annotations:
+    summary: "No successful database check in 5 minutes"
+    description: "Last success: {{ $value | humanizeDuration }}"
+```
+
+#### Connection Leak Suspected
+```yaml
+- alert: ConnectionLeakSuspected
+  expr: dbpulse_connections_active > 0
+  for: 1m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Database connection held for >1 minute"
+    description: "Possible connection leak detected"
+```
+
+### Warning Alerts
+
+#### High Error Rate
+```yaml
+- alert: DatabaseErrorRateHigh
+  expr: rate(dbpulse_errors_total[5m]) > 0.1
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "High database error rate"
+    description: "Error rate: {{ $value | humanize }}/s"
+```
+
+#### Connection Errors
+```yaml
+- alert: DatabaseConnectionErrors
+  expr: rate(dbpulse_errors_total{error_type="connection"}[5m]) > 0.05
+  for: 5m
+  labels:
+    severity: critical
+  annotations:
+    summary: "Database connection errors detected"
+    description: "{{ $labels.database }} connection error rate: {{ $value | humanize }}/s"
+```
+
+#### Slow Database Operations
+```yaml
+- alert: SlowDatabaseInserts
+  expr: |
+    histogram_quantile(0.95,
+      rate(dbpulse_operation_duration_seconds_bucket{operation="insert"}[5m])
+    ) > 1
+  for: 10m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Database inserts are slow"
+    description: "P95 insert latency: {{ $value | humanizeDuration }}"
+```
+
+#### High Overall Latency
+```yaml
+- alert: DatabaseHighLatency
   expr: histogram_quantile(0.99, rate(dbpulse_runtime_bucket[5m])) > 1
   for: 5m
   labels:
     severity: warning
   annotations:
     summary: "Database health check latency is high"
-    description: "P99 latency is above 1 second for 5 minutes"
+    description: "P99 latency: {{ $value | humanizeDuration }}"
 ```
 
-### Database Down Alert
+#### Table Growth Unbounded
 ```yaml
-- alert: DBPulseDown
-  expr: dbpuse_pulse == 0
-  for: 1m
+- alert: TableGrowthUnbounded
+  expr: rate(dbpulse_table_rows[1h]) > 1000
+  for: 30m
   labels:
-    severity: critical
+    severity: warning
   annotations:
-    summary: "Database is down"
-    description: "DBPulse reports database is not healthy"
+    summary: "dbpulse table growing rapidly"
+    description: "Cleanup may be failing. Growth rate: {{ $value | humanize }} rows/s"
 ```
 
-### TLS Handshake Errors Alert
+#### TLS Errors
 ```yaml
 - alert: DBPulseTLSErrors
   expr: rate(dbpulse_tls_connection_errors_total[5m]) > 0
@@ -130,50 +449,194 @@ This directory contains the Grafana dashboard for monitoring DBPulse metrics.
     severity: warning
   annotations:
     summary: "TLS connection errors detected"
-    description: "Database {{$labels.database}} is experiencing TLS errors: {{$labels.error_type}}"
+    description: "{{ $labels.database }} TLS errors: {{ $value | humanize }}/s"
 ```
 
-## Configuration
+#### Monitoring Loop Panics
+```yaml
+- alert: MonitoringLoopPanics
+  expr: rate(dbpulse_panics_recovered_total[5m]) > 0
+  for: 5m
+  labels:
+    severity: warning
+  annotations:
+    summary: "Monitoring loop experiencing panics"
+    description: "Panic rate: {{ $value | humanize }}/s"
+```
 
-The dashboard uses a templated datasource variable. When importing:
-- The `datasource` variable will auto-populate with available Prometheus datasources
-- Select the appropriate datasource for your DBPulse metrics
-- Refresh rate is set to 10 seconds by default
-- Time range defaults to last 1 hour
+---
 
-## Customization
+## Dashboard Customization
 
-### Changing Time Range
-Default: Last 1 hour
-- Click time picker in top right
-- Select desired range or set custom range
+### Adding New Panels
 
-### Adjusting Refresh Rate
-Default: 10 seconds
-- Click refresh dropdown in top right
-- Options: 5s, 10s, 30s, 1m, 5m, 15m, 30m, 1h, 2h, 1d
+1. Enter dashboard edit mode
+2. Click "Add" > "Visualization"
+3. Select metric from the list above
+4. Choose visualization type:
+   - **Gauge** - Single value (health status, current connections)
+   - **Time Series** - Values over time (latency, error rates)
+   - **Bar Chart** - Comparisons (error types, operations)
+   - **Stat** - Single number with trends
+   - **Table** - Multiple metrics together
 
-### Adding Custom Panels
-The dashboard includes all DBPulse metrics. To add custom panels:
-1. Click "Add panel" in dashboard edit mode
-2. Use any of the metrics listed above
-3. Configure visualization type and options
-4. Save dashboard
+### Useful Panel Combinations
+
+#### Database Health Overview
+```promql
+# Create a stat panel with multiple queries
+1. dbpuse_pulse (current health)
+2. rate(dbpulse_iterations_total{status="success"}[5m]) / rate(dbpulse_iterations_total[5m]) * 100 (success rate)
+3. histogram_quantile(0.99, rate(dbpulse_runtime_bucket[5m])) (P99 latency)
+```
+
+#### Error Breakdown
+```promql
+# Create a pie chart or bar gauge
+sum by (error_type) (rate(dbpulse_errors_total[5m]))
+```
+
+#### Operation Performance Comparison
+```promql
+# Create a time series with multiple queries
+rate(dbpulse_operation_duration_seconds_sum{operation="connect"}[5m]) /
+  rate(dbpulse_operation_duration_seconds_count{operation="connect"}[5m])
+
+rate(dbpulse_operation_duration_seconds_sum{operation="insert"}[5m]) /
+  rate(dbpulse_operation_duration_seconds_count{operation="insert"}[5m])
+
+rate(dbpulse_operation_duration_seconds_sum{operation="select"}[5m]) /
+  rate(dbpulse_operation_duration_seconds_count{operation="select"}[5m])
+```
+
+---
 
 ## Troubleshooting
 
 ### No Data Showing
-- Verify DBPulse is running and exposing metrics on `/metrics` endpoint
-- Check Prometheus is scraping DBPulse metrics endpoint
-- Verify datasource is correctly configured in Grafana
-- Check time range includes period when DBPulse was running
+1. Verify DBPulse is running: `curl http://localhost:8080/metrics`
+2. Check Prometheus is scraping: Check Prometheus targets page
+3. Verify datasource in Grafana: Configuration > Data Sources
+4. Check time range includes when DBPulse was running
 
-### Missing TLS Metrics
-- TLS metrics only appear when `--tls-mode` is not `disable`
-- Verify DBPulse is configured with TLS enabled
-- Check that database supports TLS connections
+### Missing Metrics
+- **TLS Metrics:** Only available when `--tls-mode` is not `disable`
+- **Table Size Metrics:** Only recorded during periodic checks (minute 0 of each hour)
+- **Panic Metrics:** Only incremented when panics actually occur
 
 ### Incorrect Values
-- Verify Prometheus scrape interval matches expected values
-- Check DBPulse `--interval` configuration
-- Ensure time range is appropriate for data retention
+- Verify Prometheus scrape interval matches expectations
+- Check DBPulse `--interval` configuration (default 30s)
+- Ensure rate() intervals are at least 2x scrape interval
+- Check data retention in Prometheus
+
+### High Memory Usage in Grafana
+- Reduce dashboard refresh rate (default: 10s)
+- Limit time range (default: 1h)
+- Use recording rules in Prometheus for complex queries
+
+---
+
+## Best Practices
+
+### Query Performance
+- Use `rate()` for counters, not `increase()`
+- Keep rate intervals at least 2x scrape interval
+- Use recording rules for frequently used complex queries
+- Limit cardinality by avoiding high-cardinality label combinations
+
+### Dashboard Organization
+- Group related panels together
+- Use consistent time ranges across panels
+- Add descriptions to complex panels
+- Use panel links to related dashboards
+
+### Alerting
+- Set appropriate `for` durations to avoid flapping
+- Use multiple severity levels (critical/warning)
+- Include runbook links in annotations
+- Test alerts in non-production first
+
+---
+
+## Recording Rules
+
+For better performance, pre-calculate frequently used queries:
+
+```yaml
+groups:
+  - name: dbpulse_rules
+    interval: 30s
+    rules:
+      # Success rate
+      - record: dbpulse:success_rate
+        expr: |
+          rate(dbpulse_iterations_total{status="success"}[5m]) /
+          rate(dbpulse_iterations_total[5m]) * 100
+
+      # Average latency
+      - record: dbpulse:latency:avg
+        expr: |
+          rate(dbpulse_runtime_sum[5m]) /
+          rate(dbpulse_runtime_count[5m])
+
+      # P99 latency
+      - record: dbpulse:latency:p99
+        expr: histogram_quantile(0.99, rate(dbpulse_runtime_bucket[5m]))
+
+      # Error rate by type
+      - record: dbpulse:errors:rate
+        expr: rate(dbpulse_errors_total[5m])
+```
+
+---
+
+## Configuration
+
+### Templating Variables
+The dashboard supports the following variables:
+- `datasource` - Prometheus datasource selection
+- `database` - Filter by database type (postgres/mysql)
+- `interval` - Query interval (auto, 1m, 5m, 10m, 30m, 1h)
+
+### Default Settings
+- **Time Range:** Last 1 hour
+- **Refresh:** 10 seconds
+- **Timezone:** Browser local time
+
+### Recommended Settings
+- **Production:** 30s refresh, 6h time range
+- **Development:** 5s refresh, 1h time range
+- **Troubleshooting:** 5s refresh, 15m time range
+
+---
+
+## Integration
+
+### With Alertmanager
+```yaml
+# prometheus.yml
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+rule_files:
+  - /etc/prometheus/dbpulse_alerts.yml
+```
+
+### With Other Dashboards
+Create dashboard links to:
+- Application performance monitoring (APM)
+- Infrastructure monitoring
+- Log aggregation (Loki/ELK)
+- Distributed tracing (Jaeger/Tempo)
+
+---
+
+## Support
+
+For issues or questions:
+- GitHub Issues: https://github.com/nbari/dbpulse/issues
+- Documentation: https://github.com/nbari/dbpulse/blob/master/README.md

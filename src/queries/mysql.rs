@@ -7,9 +7,11 @@ use sqlx::{
     ConnectOptions, Connection, Executor, Row,
     mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlSslMode},
 };
+use std::time::Instant;
 use uuid::Uuid;
 
 use super::HealthCheckResult;
+use crate::metrics::{CONNECTIONS_ACTIVE, CONNECTION_DURATION, OPERATION_DURATION, ROWS_AFFECTED, TABLE_SIZE_BYTES, TABLE_ROWS, TLS_HANDSHAKE_DURATION};
 use crate::tls::{TlsConfig, TlsMetadata, TlsMode};
 
 pub async fn test_rw(
@@ -64,8 +66,21 @@ pub async fn test_rw_with_table(
         options = options.ssl_client_cert(cert_path).ssl_client_key(key_path);
     }
 
+    // Track connection establishment
+    let conn_start = Instant::now();
+    CONNECTIONS_ACTIVE.inc();
+
+    let connect_timer = Instant::now();
     let mut conn = match options.connect().await {
-        Ok(conn) => conn,
+        Ok(conn) => {
+            let connect_duration = connect_timer.elapsed().as_secs_f64();
+            OPERATION_DURATION.with_label_values(&["mysql", "connect"]).observe(connect_duration);
+            // Record TLS handshake duration if TLS is enabled
+            if tls.mode.is_enabled() {
+                TLS_HANDSHAKE_DURATION.with_label_values(&["mysql"]).observe(connect_duration);
+            }
+            conn
+        }
         Err(err) => match err {
             sqlx::Error::Database(db_err) => {
                 if db_err
@@ -83,12 +98,23 @@ pub async fn test_rw_with_table(
                     .execute(&mut tmp_conn)
                     .await?;
                     drop(tmp_conn);
-                    options.connect().await?
+                    let conn = options.connect().await?;
+                    let connect_duration = connect_timer.elapsed().as_secs_f64();
+                    OPERATION_DURATION.with_label_values(&["mysql", "connect"]).observe(connect_duration);
+                    // Record TLS handshake duration if TLS is enabled
+                    if tls.mode.is_enabled() {
+                        TLS_HANDSHAKE_DURATION.with_label_values(&["mysql"]).observe(connect_duration);
+                    }
+                    conn
                 } else {
+                    CONNECTIONS_ACTIVE.dec();
                     return Err(db_err.into());
                 }
             }
-            _ => return Err(err.into()),
+            _ => {
+                CONNECTIONS_ACTIVE.dec();
+                return Err(err.into());
+            }
         },
     };
 
@@ -135,7 +161,9 @@ pub async fn test_rw_with_table(
         table_name
     );
 
+    let create_table_timer = Instant::now();
     conn.execute(create_table_sql.as_str()).await?;
+    OPERATION_DURATION.with_label_values(&["mysql", "create_table"]).observe(create_table_timer.elapsed().as_secs_f64());
 
     // write into table
     let id: u32 = rand::rng().random_range(0..range);
@@ -151,12 +179,15 @@ pub async fn test_rw_with_table(
         "#,
         table_name
     );
-    sqlx::query(&insert_sql)
+    let insert_timer = Instant::now();
+    let insert_result = sqlx::query(&insert_sql)
         .bind(id)
         .bind(now.timestamp())
         .bind(uuid.to_string())
         .execute(&mut conn)
         .await?;
+    OPERATION_DURATION.with_label_values(&["mysql", "insert"]).observe(insert_timer.elapsed().as_secs_f64());
+    ROWS_AFFECTED.with_label_values(&["mysql", "insert"]).inc_by(insert_result.rows_affected());
 
     // Check if stored record matches
     let select_sql = format!(
@@ -167,11 +198,13 @@ pub async fn test_rw_with_table(
         "#,
         table_name
     );
+    let select_timer = Instant::now();
     let row: Option<(i64, String)> = sqlx::query_as(&select_sql)
         .bind(id)
         .fetch_optional(&mut conn)
         .await
         .context("Failed to query the database")?;
+    OPERATION_DURATION.with_label_values(&["mysql", "select"]).observe(select_timer.elapsed().as_secs_f64());
 
     // Ensure the row exists and matches
     let (t1, v4) = row.context("Expected records")?;
@@ -189,6 +222,7 @@ pub async fn test_rw_with_table(
     // Use timestamp-based ID that won't conflict with normal operations
     let rollback_test_id = (now.timestamp_micros() % 2147483647) as i32;
 
+    let transaction_timer = Instant::now();
     let mut tx = conn.begin().await?;
 
     // Insert a test record
@@ -234,24 +268,55 @@ pub async fn test_rw_with_table(
         .await?;
 
     if rolled_back_value == Some(0) {
+        CONNECTIONS_ACTIVE.dec();
         return Err(anyhow!("Transaction rollback failed: value is still 0"));
     }
+    OPERATION_DURATION.with_label_values(&["mysql", "transaction_test"]).observe(transaction_timer.elapsed().as_secs_f64());
 
     // Cleanup strategy: Remove old records to prevent unbounded growth
     // Delete records older than 1 hour (keeps table size bounded)
+    // Use LIMIT to avoid long-running DELETE operations that could block other queries
     let one_hour_ago = (now - chrono::Duration::hours(1)).to_rfc3339();
-    let delete_old_sql = format!("DELETE FROM {} WHERE t2 < ?", table_name);
-    sqlx::query(&delete_old_sql)
+    let delete_old_sql = format!("DELETE FROM {} WHERE t2 < ? LIMIT 10000", table_name);
+    let cleanup_timer = Instant::now();
+    if let Ok(delete_result) = sqlx::query(&delete_old_sql)
         .bind(one_hour_ago)
         .execute(&mut conn)
         .await
-        .ok(); // Ignore errors, cleanup is best-effort
+    {
+        ROWS_AFFECTED.with_label_values(&["mysql", "delete"]).inc_by(delete_result.rows_affected());
+    }
+    OPERATION_DURATION.with_label_values(&["mysql", "cleanup"]).observe(cleanup_timer.elapsed().as_secs_f64());
 
     // Periodic full table drop: deterministic cleanup every hour at minute 0
     // This ensures table is recreated fresh periodically
+    // Only drop if we're sure it's safe (check table size first)
     if now.minute() == 0 && id < 5 {
-        let drop_table_sql = format!("DROP TABLE {}", table_name);
-        sqlx::query(&drop_table_sql).execute(&mut conn).await.ok(); // Ignore errors, table might not exist
+        // Check table size before dropping - only drop if it has fewer than 100k rows
+        let count_sql = format!("SELECT COUNT(*) FROM {}", table_name);
+        if let Ok(Some(row_count)) = sqlx::query_scalar::<_, i64>(&count_sql)
+            .fetch_optional(&mut conn)
+            .await
+        {
+            // Record table row count
+            TABLE_ROWS.with_label_values(&["mysql", table_name]).set(row_count);
+
+            // Only drop if table is relatively small to avoid disrupting active monitoring
+            if row_count < 100000 {
+                let drop_table_sql = format!("DROP TABLE IF EXISTS {}", table_name);
+                sqlx::query(&drop_table_sql).execute(&mut conn).await.ok();
+            }
+        }
+    }
+
+    // Query table size in bytes (optional, but useful for monitoring)
+    let size_sql = "SELECT data_length + index_length FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name = ?";
+    if let Ok(Some(table_bytes)) = sqlx::query_scalar::<_, i64>(size_sql)
+        .bind(table_name)
+        .fetch_optional(&mut conn)
+        .await
+    {
+        TABLE_SIZE_BYTES.with_label_values(&["mysql", table_name]).set(table_bytes);
     }
 
     // Extract TLS metadata if TLS is enabled
@@ -261,7 +326,10 @@ pub async fn test_rw_with_table(
         None
     };
 
+    // Record connection lifecycle metrics
     drop(conn);
+    CONNECTION_DURATION.observe(conn_start.elapsed().as_secs_f64());
+    CONNECTIONS_ACTIVE.dec();
 
     Ok(HealthCheckResult {
         version: version.context("Expected database version")?,
