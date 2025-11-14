@@ -63,10 +63,7 @@ pub static TLS_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 // Critical Priority Metrics
 pub static DB_ERRORS: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec_with_registry!(
-        opts!(
-            "dbpulse_errors_total",
-            "Total database errors by type"
-        ),
+        opts!("dbpulse_errors_total", "Total database errors by type"),
         &["database", "error_type"],
         &REGISTRY
     )
@@ -120,10 +117,7 @@ pub static ROWS_AFFECTED: LazyLock<IntCounterVec> = LazyLock::new(|| {
 
 pub static ITERATIONS_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec_with_registry!(
-        opts!(
-            "dbpulse_iterations_total",
-            "Total monitoring iterations"
-        ),
+        opts!("dbpulse_iterations_total", "Total monitoring iterations"),
         &["database", "status"],
         &REGISTRY
     )
@@ -157,10 +151,7 @@ pub static TABLE_SIZE_BYTES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 
 pub static TABLE_ROWS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec_with_registry!(
-        opts!(
-            "dbpulse_table_rows",
-            "Approximate row count"
-        ),
+        opts!("dbpulse_table_rows", "Approximate row count"),
         &["database", "table"],
         &REGISTRY
     )
@@ -223,7 +214,9 @@ mod tests {
     #[test]
     fn test_metrics_labels() {
         // Test metrics with labels
-        DB_ERRORS.with_label_values(&["postgres", "connection"]).inc();
+        DB_ERRORS
+            .with_label_values(&["postgres", "connection"])
+            .inc();
         OPERATION_DURATION
             .with_label_values(&["postgres", "connect"])
             .observe(0.123);
@@ -233,7 +226,9 @@ mod tests {
         ITERATIONS_TOTAL
             .with_label_values(&["postgres", "success"])
             .inc();
-        LAST_SUCCESS.with_label_values(&["postgres"]).set(1234567890);
+        LAST_SUCCESS
+            .with_label_values(&["postgres"])
+            .set(1234567890);
         TABLE_SIZE_BYTES
             .with_label_values(&["postgres", "dbpulse_rw"])
             .set(1024);
@@ -270,7 +265,9 @@ mod tests {
         // Test counters
         PANICS_RECOVERED.inc();
         DB_ERRORS.with_label_values(&["postgres", "timeout"]).inc();
-        ROWS_AFFECTED.with_label_values(&["postgres", "delete"]).inc_by(10);
+        ROWS_AFFECTED
+            .with_label_values(&["postgres", "delete"])
+            .inc_by(10);
         TLS_CONNECTION_ERRORS
             .with_label_values(&["postgres", "certificate"])
             .inc();
@@ -292,18 +289,24 @@ mod tests {
 
     #[test]
     fn test_registry() {
+        // Force initialization of metrics by accessing them
+        let _ = &*PULSE;
+        let _ = &*RUNTIME;
+        let _ = &*DB_ERRORS;
+        let _ = &*OPERATION_DURATION;
+
         // Test that registry can gather metrics
         let metrics = REGISTRY.gather();
         assert!(!metrics.is_empty());
 
         // Check that our custom metrics are registered
-        let metric_names: Vec<String> = metrics
-            .iter()
-            .map(|m| m.name().to_string())
-            .collect();
+        let metric_names: Vec<String> = metrics.iter().map(|m| m.name().to_string()).collect();
 
+        // Check for some expected metrics (note: PULSE has typo "dbpuse_pulse")
         assert!(metric_names.contains(&"dbpuse_pulse".to_string()));
         assert!(metric_names.contains(&"dbpulse_runtime".to_string()));
+        assert!(metric_names.contains(&"dbpulse_errors_total".to_string()));
+        assert!(metric_names.contains(&"dbpulse_operation_duration_seconds".to_string()));
     }
 
     #[test]

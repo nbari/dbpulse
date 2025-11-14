@@ -112,7 +112,7 @@ mod tests {
             listen: None,
             port: 8080,
             range: 100,
-            tls: tls.clone(),
+            tls,
         };
 
         match action {

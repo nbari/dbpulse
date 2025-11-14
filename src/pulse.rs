@@ -122,105 +122,6 @@ fn is_tls_error(error: &anyhow::Error) -> bool {
         || error_str.contains("Certificate")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use anyhow::anyhow;
-
-    #[test]
-    fn test_is_tls_error_lowercase_ssl() {
-        let error = anyhow!("Connection failed: ssl handshake error");
-        assert!(is_tls_error(&error));
-    }
-
-    #[test]
-    fn test_is_tls_error_uppercase_ssl() {
-        let error = anyhow!("Connection failed: SSL handshake error");
-        assert!(is_tls_error(&error));
-    }
-
-    #[test]
-    fn test_is_tls_error_lowercase_tls() {
-        let error = anyhow!("tls connection refused");
-        assert!(is_tls_error(&error));
-    }
-
-    #[test]
-    fn test_is_tls_error_uppercase_tls() {
-        let error = anyhow!("TLS connection refused");
-        assert!(is_tls_error(&error));
-    }
-
-    #[test]
-    fn test_is_tls_error_lowercase_certificate() {
-        let error = anyhow!("Invalid certificate chain");
-        assert!(is_tls_error(&error));
-    }
-
-    #[test]
-    fn test_is_tls_error_uppercase_certificate() {
-        let error = anyhow!("Certificate verification failed");
-        assert!(is_tls_error(&error));
-    }
-
-    #[test]
-    fn test_is_not_tls_error() {
-        let error = anyhow!("Connection timeout");
-        assert!(!is_tls_error(&error));
-
-        let error = anyhow!("Authentication failed");
-        assert!(!is_tls_error(&error));
-
-        let error = anyhow!("Database not found");
-        assert!(!is_tls_error(&error));
-    }
-
-    #[test]
-    fn test_pulse_default() {
-        let pulse = Pulse::default();
-        assert_eq!(pulse.runtime_ms, 0);
-        assert_eq!(pulse.time, "");
-        assert_eq!(pulse.version, "");
-        assert!(pulse.tls_version.is_none());
-        assert!(pulse.tls_cipher.is_none());
-    }
-
-    #[test]
-    fn test_pulse_serialization() {
-        let pulse = Pulse {
-            runtime_ms: 123,
-            time: "2024-01-01T00:00:00Z".to_string(),
-            version: "PostgreSQL 15.0".to_string(),
-            tls_version: Some("TLSv1.3".to_string()),
-            tls_cipher: Some("AES256-GCM-SHA384".to_string()),
-        };
-
-        let json = serde_json::to_string(&pulse).unwrap();
-        assert!(json.contains("\"runtime_ms\":123"));
-        assert!(json.contains("\"version\":\"PostgreSQL 15.0\""));
-        assert!(json.contains("\"tls_version\":\"TLSv1.3\""));
-        assert!(json.contains("\"tls_cipher\":\"AES256-GCM-SHA384\""));
-    }
-
-    #[test]
-    fn test_pulse_serialization_without_tls() {
-        let pulse = Pulse {
-            runtime_ms: 50,
-            time: "2024-01-01T00:00:00Z".to_string(),
-            version: "MySQL 8.0".to_string(),
-            tls_version: None,
-            tls_cipher: None,
-        };
-
-        let json = serde_json::to_string(&pulse).unwrap();
-        assert!(json.contains("\"runtime_ms\":50"));
-        assert!(json.contains("\"version\":\"MySQL 8.0\""));
-        // These fields should be omitted when None (skip_serializing_if)
-        assert!(!json.contains("tls_version"));
-        assert!(!json.contains("tls_cipher"));
-    }
-}
-
 async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::UnboundedSender<()>) {
     loop {
         // Catch panics in individual iterations to keep loop alive
@@ -432,5 +333,104 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
             // Sleep for the interval before retrying
             time::sleep(time::Duration::from_secs(every.into())).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+
+    #[test]
+    fn test_is_tls_error_lowercase_ssl() {
+        let error = anyhow!("Connection failed: ssl handshake error");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_tls_error_uppercase_ssl() {
+        let error = anyhow!("Connection failed: SSL handshake error");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_tls_error_lowercase_tls() {
+        let error = anyhow!("tls connection refused");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_tls_error_uppercase_tls() {
+        let error = anyhow!("TLS connection refused");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_tls_error_lowercase_certificate() {
+        let error = anyhow!("Invalid certificate chain");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_tls_error_uppercase_certificate() {
+        let error = anyhow!("Certificate verification failed");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_not_tls_error() {
+        let error = anyhow!("Connection timeout");
+        assert!(!is_tls_error(&error));
+
+        let error = anyhow!("Authentication failed");
+        assert!(!is_tls_error(&error));
+
+        let error = anyhow!("Database not found");
+        assert!(!is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_pulse_default() {
+        let pulse = Pulse::default();
+        assert_eq!(pulse.runtime_ms, 0);
+        assert_eq!(pulse.time, "");
+        assert_eq!(pulse.version, "");
+        assert!(pulse.tls_version.is_none());
+        assert!(pulse.tls_cipher.is_none());
+    }
+
+    #[test]
+    fn test_pulse_serialization() {
+        let pulse = Pulse {
+            runtime_ms: 123,
+            time: "2024-01-01T00:00:00Z".to_string(),
+            version: "PostgreSQL 15.0".to_string(),
+            tls_version: Some("TLSv1.3".to_string()),
+            tls_cipher: Some("AES256-GCM-SHA384".to_string()),
+        };
+
+        let json = serde_json::to_string(&pulse).unwrap();
+        assert!(json.contains("\"runtime_ms\":123"));
+        assert!(json.contains("\"version\":\"PostgreSQL 15.0\""));
+        assert!(json.contains("\"tls_version\":\"TLSv1.3\""));
+        assert!(json.contains("\"tls_cipher\":\"AES256-GCM-SHA384\""));
+    }
+
+    #[test]
+    fn test_pulse_serialization_without_tls() {
+        let pulse = Pulse {
+            runtime_ms: 50,
+            time: "2024-01-01T00:00:00Z".to_string(),
+            version: "MySQL 8.0".to_string(),
+            tls_version: None,
+            tls_cipher: None,
+        };
+
+        let json = serde_json::to_string(&pulse).unwrap();
+        assert!(json.contains("\"runtime_ms\":50"));
+        assert!(json.contains("\"version\":\"MySQL 8.0\""));
+        // These fields should be omitted when None (skip_serializing_if)
+        assert!(!json.contains("tls_version"));
+        assert!(!json.contains("tls_cipher"));
     }
 }
