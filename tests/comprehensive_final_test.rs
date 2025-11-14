@@ -183,7 +183,7 @@ async fn test_metrics_accuracy() {
     // Successful operation
     let now = chrono::Utc::now();
     let start = std::time::Instant::now();
-    let result = dbpulse::queries::postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = dbpulse::queries::postgres::test_rw_with_table(&dsn, now, 100, &tls, table_name).await;
     let duration = start.elapsed();
 
     assert!(result.is_ok(), "Test operation should succeed");
@@ -217,7 +217,7 @@ async fn test_read_only_detection() {
     let table_name = "dbpulse_readonly_test";
 
     let now = chrono::Utc::now();
-    let result = dbpulse::queries::postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = dbpulse::queries::postgres::test_rw_with_table(&dsn, now, 100, &tls, table_name).await;
 
     match result {
         Ok(health) => {
@@ -252,7 +252,7 @@ async fn test_transaction_rollback_verification() {
 
     // The test_rw function includes transaction rollback testing
     let now = chrono::Utc::now();
-    let result = dbpulse::queries::postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = dbpulse::queries::postgres::test_rw_with_table(&dsn, now, 100, &tls, table_name).await;
 
     assert!(result.is_ok(), "Transaction rollback test failed: {:?}", result);
 
@@ -277,7 +277,7 @@ async fn test_cleanup_operations_bounded() {
     // Insert many records to test cleanup
     for i in 0..50 {
         let now = chrono::Utc::now();
-        let _ = dbpulse::queries::postgres::test_rw_with_table(&dsn, now, 1000, &tls, &table_name).await;
+        let _ = dbpulse::queries::postgres::test_rw_with_table(&dsn, now, 1000, &tls, table_name).await;
 
         if i % 10 == 0 {
             println!("Inserted batch {}", i);
@@ -287,7 +287,7 @@ async fn test_cleanup_operations_bounded() {
     // Now run cleanup (happens automatically in test_rw)
     let start = std::time::Instant::now();
     let now = chrono::Utc::now();
-    let result = dbpulse::queries::postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = dbpulse::queries::postgres::test_rw_with_table(&dsn, now, 100, &tls, table_name).await;
     let duration = start.elapsed();
 
     assert!(result.is_ok(), "Cleanup operation failed");
@@ -361,7 +361,7 @@ async fn test_error_recovery() {
     let now = chrono::Utc::now();
     let result = timeout(
         Duration::from_secs(5),
-        dbpulse::queries::postgres::test_rw_with_table(&invalid_dsn, now, 100, &tls, &table_name)
+        dbpulse::queries::postgres::test_rw_with_table(&invalid_dsn, now, 100, &tls, table_name)
     ).await;
 
     // Should either error or timeout, but not panic
@@ -389,7 +389,7 @@ async fn test_mysql_compatibility() {
     let table_name = "dbpulse_mysql_compat_test";
 
     let now = chrono::Utc::now();
-    let result = dbpulse::queries::mysql::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = dbpulse::queries::mysql::test_rw_with_table(&dsn, now, 100, &tls, table_name).await;
 
     match result {
         Ok(health) => {
@@ -425,7 +425,7 @@ async fn test_performance_baseline() {
         let now = chrono::Utc::now();
         let start = std::time::Instant::now();
 
-        let result = dbpulse::queries::postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+        let result = dbpulse::queries::postgres::test_rw_with_table(&dsn, now, 100, &tls, table_name).await;
 
         if result.is_ok() {
             durations.push(start.elapsed());
