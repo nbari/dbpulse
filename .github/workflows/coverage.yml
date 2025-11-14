@@ -11,14 +11,75 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:latest
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      mariadb:
+        image: mariadb:latest
+        env:
+          MARIADB_USER: dbpulse
+          MARIADB_PASSWORD: secret
+          MARIADB_ROOT_PASSWORD: secret
+          MARIADB_DATABASE: testdb
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mariadb-admin ping -h localhost -u root -psecret"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
 
-      - name: Run tests
-        run: cargo test --verbose -- --nocapture
+      - name: Install database clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client mariadb-client
+      
+      - name: Wait for databases
+        run: |
+          echo "Waiting for PostgreSQL..."
+          for i in {1..30}; do
+            if pg_isready -h localhost -p 5432 -U postgres; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            echo "PostgreSQL not ready, waiting... ($i/30)"
+            sleep 2
+          done
+          
+          echo "Waiting for MariaDB..."
+          for i in {1..30}; do
+            if mariadb -h 127.0.0.1 -u dbpulse -psecret -D testdb -e "SELECT 1" &>/dev/null; then
+              echo "MariaDB is ready!"
+              break
+            fi
+            echo "MariaDB not ready, waiting... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run tests (unit + integration)
+        run: |
+          cargo test --verbose -- --nocapture
+          cargo test --test postgres_test -- --ignored --nocapture
+          cargo test --test mariadb_test -- --ignored --nocapture
         env:
           RUST_BACKTRACE: full
           CARGO_INCREMENTAL: 0
@@ -30,13 +91,15 @@ jobs:
         run: if [[ ! -e ~/.cargo/bin/grcov ]]; then cargo install grcov; fi
 
       - name: Run grcov
-        run: grcov . --binary-path target/debug/deps/ -s . -t lcov --branch --ignore-not-existing
+        run: grcov . --binary-path target/debug/ -s . -t lcov --branch --ignore-not-existing
           --ignore '../**' --ignore '/*' -o coverage.lcov
 
-      - uses: codecov/codecov-action@v4
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage.lcov
+          files: coverage.lcov
           flags: rust
 
       - name: Coveralls GitHub Action
