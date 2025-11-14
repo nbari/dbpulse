@@ -1,4 +1,13 @@
-## 0.5.4 (Unreleased)
+## 0.6.0 (2025-11-14)
+
+**MAJOR RELEASE** - Complete metrics overhaul with breaking changes
+
+### Breaking Changes
+* **Dependency Removal**: Removed `lazy_static` dependency in favor of `std::sync::LazyLock`
+  - Metrics are now initialized using Rust 1.80+ standard library
+  - If you were directly importing metrics from this crate, you may need to update your code
+  - No breaking changes for normal CLI usage
+  - Requires Rust 1.80 or later (edition 2024)
 
 ### Added
 * Container images now published to GitHub Container Registry (GHCR)
@@ -6,13 +15,19 @@
 * Automated container image publishing on release
 * Comprehensive metrics documentation with Prometheus query examples
 * Example Prometheus alert rules for database monitoring
-* Extensive robustness test suite (12 tests) covering:
-  - Panic recovery in monitoring iterations
-  - JoinHandle monitoring and failure detection
-  - Graceful shutdown coordination
-  - State integrity across failure boundaries
-  - Stress testing with 1000+ iterations
-* **Enhanced Prometheus Metrics Suite** - Complete observability overhaul:
+* **Extensive Test Suite Improvements**:
+  - Added 23 new unit tests (49 total tests, up from 26)
+  - Comprehensive metrics testing (10 new tests)
+  - Pulse module testing (9 new tests)
+  - Actions module testing (4 new tests)
+  - Code coverage improved from 27.74% to 45.08%
+  - Robustness test suite (12 tests) covering:
+    - Panic recovery in monitoring iterations
+    - JoinHandle monitoring and failure detection
+    - Graceful shutdown coordination
+    - State integrity across failure boundaries
+    - Stress testing with 1000+ iterations
+* **Enhanced Prometheus Metrics Suite** - Complete observability overhaul with 11 new metrics:
   - **Error Classification Metrics** (`dbpulse_errors_total`):
     - Tracks errors by type: authentication, timeout, connection, transaction, query
     - Enables targeted alerting and debugging
@@ -45,6 +60,19 @@
   - **TLS Handshake Duration** (`dbpulse_tls_handshake_duration_seconds`):
     - Now properly recorded (previously defined but unused)
     - Measures TLS connection establishment time
+* **Comprehensive Documentation**:
+  - New `grafana/README.md` (643 lines) with complete metrics reference
+  - PromQL query examples for all metrics
+  - Alert rules for production monitoring
+  - Recording rules for performance optimization
+  - Best practices and troubleshooting guide
+  - `COVERAGE_REPORT.md` with detailed test coverage analysis
+  - `CODE_QUALITY_REPORT.md` with security audit and recommendations
+* **Grafana Dashboard Rewrite**:
+  - Completely redesigned dashboard with 18 panels (up from 7)
+  - Organized into 5 logical sections: Overview, Performance, Errors & Reliability, Connection & Data Operations, TLS/SSL Monitoring
+  - All new metrics integrated with proper visualizations
+  - Clear panel descriptions and appropriate thresholds
 
 ### Improved
 * **Dependency Reduction**: Replaced `lazy_static` crate with `std::sync::LazyLock`

@@ -1478,7 +1478,7 @@
   "refresh": "10s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["dbpulse", "database", "monitoring", "health", "v0.5.4"],
+  "tags": ["dbpulse", "database", "monitoring", "health", "v0.6.0"],
   "templating": {
     "list": [
       {
@@ -1507,7 +1507,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "DBPulse v0.5.4 - Comprehensive Database Monitoring",
+  "title": "DBPulse v0.6.0 - Comprehensive Database Monitoring",
   "uid": "dbpulse-dashboard",
   "version": 2,
   "weekStart": ""
