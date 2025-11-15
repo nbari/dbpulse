@@ -60,7 +60,7 @@ jobs:
 
       # Linux-only prerequisites
       - name: Install system deps (musl)
-        if: startsWith(matrix.build, 'linux')
+        if: matrix.build == 'linux-amd64'
         run: |
           sudo apt-get update -y
           sudo apt-get install -y musl-dev musl-tools
@@ -71,11 +71,19 @@ jobs:
           cargo install cargo-generate-rpm
           cargo install cargo-deb --force --locked
 
-      # Build once for Linux (musl)
-      - name: Build Linux (musl)
-        if: startsWith(matrix.build, 'linux')
-        run: cargo build --release --locked --target ${{ matrix.target }} --features
-          musl
+      - name: Install cross for ARM64
+        if: matrix.build == 'linux-arm64'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      # Build for Linux amd64 (musl)
+      - name: Build Linux amd64 (musl)
+        if: matrix.build == 'linux-amd64'
+        run: cargo build --release --locked --target ${{ matrix.target }} --features musl
+
+      # Build for Linux arm64 (musl) using cross
+      - name: Build Linux arm64 (musl) with cross
+        if: matrix.build == 'linux-arm64'
+        run: cross build --release --locked --target ${{ matrix.target }} --features musl
 
       # Strip once and prep paths for both packagers
       - name: Strip and prepare packaging paths (Linux)
