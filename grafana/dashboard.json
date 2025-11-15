@@ -1,4 +1,52 @@
 {
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus datasource for DBPulse metrics",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "11.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    },
+    {
+      "type": "panel",
+      "id": "gauge",
+      "name": "Gauge",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "bargauge",
+      "name": "Bar gauge",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
+    }
+  ],
   "annotations": {
     "list": [
       {
@@ -96,14 +144,14 @@
         "showThresholdLabels": false,
         "showThresholdMarkers": true
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpuse_pulse",
+          "expr": "dbpulse_pulse",
           "refId": "A"
         }
       ],
@@ -161,7 +209,7 @@
         "showThresholdLabels": false,
         "showThresholdMarkers": true
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -235,7 +283,7 @@
         "showThresholdLabels": false,
         "showThresholdMarkers": true
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -300,7 +348,7 @@
         "showThresholdMarkers": true,
         "text": {}
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -361,7 +409,7 @@
         "showThresholdMarkers": true,
         "text": {}
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -449,7 +497,7 @@
           "sort": "desc"
         }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -551,7 +599,7 @@
           "sort": "desc"
         }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -644,7 +692,7 @@
           "sort": "desc"
         }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -719,7 +767,7 @@
           "sort": "desc"
         }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -807,7 +855,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -869,7 +917,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -966,7 +1014,7 @@
           "sort": "desc"
         }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -1050,7 +1098,7 @@
           "sort": "desc"
         }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -1142,7 +1190,7 @@
           "sort": "desc"
         }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -1225,7 +1273,7 @@
           "sort": "desc"
         }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -1314,7 +1362,7 @@
           "sort": "desc"
         }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -1402,7 +1450,7 @@
           "sort": "desc"
         }
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -1459,7 +1507,7 @@
         },
         "showUnfilled": true
       },
-      "pluginVersion": "10.0.0",
+      "pluginVersion": "11.0.0",
       "targets": [
         {
           "datasource": {
@@ -1476,9 +1524,9 @@
     }
   ],
   "refresh": "10s",
-  "schemaVersion": 38,
+  "schemaVersion": 39,
   "style": "dark",
-  "tags": ["dbpulse", "database", "monitoring", "health", "v0.6.0"],
+  "tags": ["dbpulse", "database", "monitoring", "health"],
   "templating": {
     "list": [
       {
@@ -1494,6 +1542,7 @@
         "name": "datasource",
         "options": [],
         "query": "prometheus",
+        "queryValue": "",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
@@ -1507,8 +1556,8 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "DBPulse v0.6.0 - Comprehensive Database Monitoring",
+  "title": "DBPulse - Comprehensive Database Monitoring",
   "uid": "dbpulse-dashboard",
-  "version": 2,
+  "version": 1,
   "weekStart": ""
 }
