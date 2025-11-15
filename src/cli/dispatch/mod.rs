@@ -2,8 +2,55 @@ use crate::cli::actions::Action;
 use crate::tls::{TlsConfig, TlsMode};
 use anyhow::{Context, Result};
 use clap::ArgMatches;
+use dsn::DSN;
 use std::net::IpAddr;
 use std::path::PathBuf;
+
+/// Extract TLS configuration from DSN query parameters
+///
+/// Supports both PostgreSQL-style and MySQL-style parameter names:
+/// - sslmode, ssl-mode: disable|require|verify-ca|verify-full
+/// - sslrootcert, sslca, ssl-ca: Path to CA certificate
+/// - sslcert, ssl-cert: Path to client certificate
+/// - sslkey, ssl-key: Path to client private key
+fn extract_tls_config(dsn: &DSN) -> TlsConfig {
+    // Extract TLS mode (try both sslmode and ssl-mode)
+    let mode = dsn
+        .params
+        .get("sslmode")
+        .or_else(|| dsn.params.get("ssl-mode"))
+        .and_then(|m| m.parse::<TlsMode>().ok())
+        .unwrap_or_default();
+
+    // Extract CA certificate path (try multiple parameter names)
+    let ca = dsn
+        .params
+        .get("sslrootcert")
+        .or_else(|| dsn.params.get("sslca"))
+        .or_else(|| dsn.params.get("ssl-ca"))
+        .map(PathBuf::from);
+
+    // Extract client certificate path
+    let cert = dsn
+        .params
+        .get("sslcert")
+        .or_else(|| dsn.params.get("ssl-cert"))
+        .map(PathBuf::from);
+
+    // Extract client key path
+    let key = dsn
+        .params
+        .get("sslkey")
+        .or_else(|| dsn.params.get("ssl-key"))
+        .map(PathBuf::from);
+
+    TlsConfig {
+        mode,
+        ca,
+        cert,
+        key,
+    }
+}
 
 /// Convert `ArgMatches` into typed Action enum with validation
 ///
@@ -36,18 +83,8 @@ pub fn dispatch(matches: ArgMatches) -> Result<Action> {
     // Extract range with default
     let range = matches.get_one::<u32>("range").copied().unwrap_or(100);
 
-    // Extract TLS configuration
-    let tls_mode = matches
-        .get_one::<String>("tls-mode")
-        .and_then(|m| m.parse::<TlsMode>().ok())
-        .unwrap_or_default();
-
-    let tls = TlsConfig {
-        mode: tls_mode,
-        ca: matches.get_one::<String>("tls-ca").map(PathBuf::from),
-        cert: matches.get_one::<String>("tls-cert").map(PathBuf::from),
-        key: matches.get_one::<String>("tls-key").map(PathBuf::from),
-    };
+    // Extract TLS configuration from DSN query parameters
+    let tls = extract_tls_config(&dsn);
 
     Ok(Action::Monitor {
         dsn,
@@ -240,9 +277,7 @@ mod tests {
             .try_get_matches_from(vec![
                 "dbpulse",
                 "--dsn",
-                "postgres://user:pass@localhost/db",
-                "--tls-mode",
-                "require",
+                "postgres://user:pass@tcp(localhost:5432)/db?sslmode=require",
             ])
             .unwrap();
 
@@ -259,6 +294,64 @@ mod tests {
                 assert_eq!(dsn.driver, "postgres");
                 assert_eq!(tls.mode, TlsMode::Require);
                 assert!(tls.mode.is_enabled());
+            }
+        }
+    }
+
+    #[test]
+    fn test_dispatch_with_tls_full_config() {
+        let cmd = commands::new();
+        let matches = cmd
+            .try_get_matches_from(vec![
+                "dbpulse",
+                "--dsn",
+                "postgres://user:pass@tcp(localhost:5432)/db?sslmode=verify-full&sslrootcert=/path/to/ca.crt&sslcert=/path/to/client.crt&sslkey=/path/to/client.key",
+            ])
+            .unwrap();
+
+        let action = dispatch(matches).unwrap();
+        match action {
+            Action::Monitor {
+                dsn,
+                interval: _,
+                listen: _,
+                port: _,
+                range: _,
+                tls,
+            } => {
+                assert_eq!(dsn.driver, "postgres");
+                assert_eq!(tls.mode, TlsMode::VerifyFull);
+                assert_eq!(tls.ca, Some(PathBuf::from("/path/to/ca.crt")));
+                assert_eq!(tls.cert, Some(PathBuf::from("/path/to/client.crt")));
+                assert_eq!(tls.key, Some(PathBuf::from("/path/to/client.key")));
+            }
+        }
+    }
+
+    #[test]
+    fn test_dispatch_with_mysql_ssl_mode() {
+        let cmd = commands::new();
+        let matches = cmd
+            .try_get_matches_from(vec![
+                "dbpulse",
+                "--dsn",
+                "mysql://root:secret@tcp(localhost:3306)/db?ssl-mode=verify-ca&ssl-ca=/etc/ssl/ca.crt",
+            ])
+            .unwrap();
+
+        let action = dispatch(matches).unwrap();
+        match action {
+            Action::Monitor {
+                dsn,
+                interval: _,
+                listen: _,
+                port: _,
+                range: _,
+                tls,
+            } => {
+                assert_eq!(dsn.driver, "mysql");
+                assert_eq!(tls.mode, TlsMode::VerifyCA);
+                assert_eq!(tls.ca, Some(PathBuf::from("/etc/ssl/ca.crt")));
             }
         }
     }
