@@ -520,7 +520,7 @@ rate(dbpulse_operation_duration_seconds_sum{operation="select"}[5m]) /
 4. Check time range includes when DBPulse was running
 
 ### Missing Metrics
-- **TLS Metrics:** Only available when `--tls-mode` is not `disable`
+- **TLS Metrics:** Only available when DSN includes `sslmode` parameter (e.g., `?sslmode=require`)
 - **Table Size Metrics:** Only recorded during periodic checks (minute 0 of each hour)
 - **Panic Metrics:** Only incremented when panics actually occur
 

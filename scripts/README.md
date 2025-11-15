@@ -99,26 +99,26 @@ podman exec dbpulse-mariadb-tls mariadb -u root -psecret -e "SHOW VARIABLES LIKE
 
 ```bash
 # TLS required
-postgresql://postgres:secret@localhost:5432/testdb?sslmode=require
+postgresql://postgres:secret@tcp(localhost:5432)/testdb?sslmode=require
 
 # TLS with CA verification
-postgresql://postgres:secret@localhost:5432/testdb?sslmode=verify-ca&sslrootcert=.certs/postgres/ca.crt
+postgresql://postgres:secret@tcp(localhost:5432)/testdb?sslmode=verify-ca&sslrootcert=.certs/postgres/ca.crt
 
 # TLS with full verification
-postgresql://postgres:secret@localhost:5432/testdb?sslmode=verify-full&sslrootcert=.certs/postgres/ca.crt
+postgresql://postgres:secret@tcp(localhost:5432)/testdb?sslmode=verify-full&sslrootcert=.certs/postgres/ca.crt
 ```
 
 ### MariaDB/MySQL
 
 ```bash
 # TLS required
-mysql://dbpulse:secret@localhost:3306/testdb?ssl-mode=REQUIRED
+mysql://dbpulse:secret@tcp(localhost:3306)/testdb?ssl-mode=REQUIRED
 
 # TLS with CA verification
-mysql://dbpulse:secret@localhost:3306/testdb?ssl-mode=VERIFY_CA&ssl-ca=.certs/mariadb/ca.crt
+mysql://dbpulse:secret@tcp(localhost:3306)/testdb?ssl-mode=VERIFY_CA&ssl-ca=.certs/mariadb/ca.crt
 
 # TLS with full verification
-mysql://dbpulse:secret@localhost:3306/testdb?ssl-mode=VERIFY_IDENTITY&ssl-ca=.certs/mariadb/ca.crt
+mysql://dbpulse:secret@tcp(localhost:3306)/testdb?ssl-mode=VERIFY_IDENTITY&ssl-ca=.certs/mariadb/ca.crt
 ```
 
 ## Testing TLS Connections

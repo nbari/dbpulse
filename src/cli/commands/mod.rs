@@ -21,8 +21,20 @@ pub fn new() -> Command {
         .arg(
             Arg::new("dsn")
                 .env("DBPULSE_DSN")
-                .help("<mysql|postgres>://<username>:<password>@tcp(<host>:<port>)/<database>")
+                .help("<mysql|postgres>://<username>:<password>@tcp(<host>:<port>)/<database>?sslmode=<mode>")
                 .long("dsn")
+                .long_help(
+                    "Database connection string with optional TLS parameters:\n\n\
+                    Format: <driver>://<user>:<pass>@tcp(<host>:<port>)/<db>?param1=value1&param2=value2\n\n\
+                    TLS Parameters (query string):\n\
+                    - sslmode: disable|require|verify-ca|verify-full (default: disable)\n\
+                    - sslrootcert or sslca: Path to CA certificate file\n\
+                    - sslcert: Path to client certificate file\n\
+                    - sslkey: Path to client private key file\n\n\
+                    Examples:\n\
+                    postgres://user:pass@tcp(localhost:5432)/db?sslmode=require\n\
+                    mysql://root:secret@tcp(db.example.com:3306)/prod?sslmode=verify-full&sslca=/etc/ssl/ca.crt"
+                )
                 .short('d')
                 .required(true),
         )
@@ -72,67 +84,6 @@ pub fn new() -> Command {
                 .long("range")
                 .short('r')
                 .value_parser(clap::value_parser!(u32)),
-        )
-        .arg(
-            Arg::new("tls-mode")
-                .env("DBPULSE_TLS_MODE")
-                .help("TLS/SSL mode: disable, require, verify-ca, verify-full")
-                .long("tls-mode")
-                .long_help(
-                    "TLS/SSL connection mode:\n\n\
-                    - disable: No TLS (default)\n\
-                    - require: TLS required, no certificate verification\n\
-                    - verify-ca: Verify server certificate against CA\n\
-                    - verify-full: Verify certificate and hostname\n\n\
-                    MySQL/MariaDB: Maps to ssl-mode (DISABLED, REQUIRED, VERIFY_CA, VERIFY_IDENTITY)\n\
-                    PostgreSQL: Maps to sslmode (disable, require, verify-ca, verify-full)\n\n\
-                    Note: TLS monitoring provides detailed metrics including:\n\
-                    - Handshake duration and success/failure rates\n\
-                    - TLS version negotiated (TLSv1.2, TLSv1.3)\n\
-                    - Cipher suite in use\n\
-                    - Certificate expiration monitoring"
-                )
-                .value_name("MODE")
-                .value_parser(["disable", "require", "verify-ca", "verify-full"]),
-        )
-        .arg(
-            Arg::new("tls-ca")
-                .env("DBPULSE_TLS_CA")
-                .help("Path to CA certificate file for TLS verification")
-                .long("tls-ca")
-                .long_help(
-                    "Path to Certificate Authority (CA) certificate file.\n\
-                    Required for verify-ca and verify-full modes.\n\n\
-                    Example: /etc/ssl/certs/ca-certificates.crt"
-                )
-                .value_name("PATH")
-                .requires("tls-mode"),
-        )
-        .arg(
-            Arg::new("tls-cert")
-                .env("DBPULSE_TLS_CERT")
-                .help("Path to client certificate file for TLS client authentication")
-                .long("tls-cert")
-                .long_help(
-                    "Path to client certificate file for mutual TLS authentication.\n\
-                    Must be used together with --tls-key.\n\n\
-                    Example: /etc/dbpulse/client-cert.pem"
-                )
-                .value_name("PATH")
-                .requires("tls-key"),
-        )
-        .arg(
-            Arg::new("tls-key")
-                .env("DBPULSE_TLS_KEY")
-                .help("Path to client private key file for TLS client authentication")
-                .long("tls-key")
-                .long_help(
-                    "Path to client private key file for mutual TLS authentication.\n\
-                    Must be used together with --tls-cert.\n\n\
-                    Example: /etc/dbpulse/client-key.pem"
-                )
-                .value_name("PATH")
-                .requires("tls-cert"),
         )
 }
 

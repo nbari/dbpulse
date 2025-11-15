@@ -1,3 +1,40 @@
+## 0.6.3 (2025-11-15)
+
+### Changed
+* **TLS Configuration via DSN Query Parameters** - Simplified TLS setup
+  - Removed CLI flags: `--tls-mode`, `--tls-ca`, `--tls-cert`, `--tls-key`
+  - TLS now configured directly in DSN query string
+  - PostgreSQL: `?sslmode=require&sslrootcert=/path/to/ca.crt`
+  - MySQL/MariaDB: `?ssl-mode=require&ssl-ca=/path/to/ca.crt`
+  - Supports both PostgreSQL-style (`sslmode`, `sslrootcert`) and MySQL-style (`ssl-mode`, `ssl-ca`) parameters
+  - Works with both `tcp()` and `unix()` DSN protocols
+  - More consistent with standard database connection strings
+
+### Improved
+* **Container Build Optimization** - 87% faster builds
+  - Added ARM64 to build matrix (native compilation for both architectures)
+  - Container build now uses pre-built binaries from build artifacts
+  - Reduced container build time from 1h 34m to ~3 minutes
+  - Total release workflow time: 1h 44m → ~13 minutes
+  - Simplified Dockerfile from 61 lines to 22 lines
+  - Binary consistency: container uses same binaries as release artifacts
+* **Grafana Dashboard Updates**
+  - Updated to Grafana 11.x (schema version 39)
+  - Added `__inputs` and `__requires` sections for grafana.com compatibility
+  - Fixed typo: `dbpuse_pulse` → `dbpulse_pulse`
+  - Removed version number from dashboard title
+  - Updated all panel plugin versions to 11.0.0
+  - Ready for import at grafana.com
+
+### Documentation
+* Added comprehensive TLS configuration section to README
+  - DSN format examples for PostgreSQL and MySQL
+  - TLS parameter reference table
+  - Examples for all TLS modes (disable, require, verify-ca, verify-full)
+  - Mutual TLS (mTLS) configuration examples
+* Updated all documentation to reflect DSN-based TLS configuration
+* Improved CI/CD documentation with test tag workflow
+
 ## 0.6.0 (2025-11-14)
 
 **MAJOR RELEASE** - Complete metrics overhaul with breaking changes

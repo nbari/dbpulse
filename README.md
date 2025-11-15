@@ -95,12 +95,51 @@ command line tool to monitor that database is available for read & write
 Usage: dbpulse [OPTIONS] --dsn <dsn>
 
 Options:
-  -d, --dsn <dsn>            <mysql|postgres>://<username>:<password>@tcp(<host>:<port>)/<database> [env: DBPULSE_DSN=postgres://postgres:secret@tcp(localhost)/dbpulse]
-  -i, --interval <interval>  number of seconds between checks [env: DBPULSE_INTERVAL=] [default: 30]
-  -p, --port <port>          listening port for /metrics [env: DBPULSE_PORT=] [default: 9300]
-  -r, --range <range>        The upper limit of the ID range [env: DBPULSE_RANGE=] [default: 100]
-  -h, --help                 Print help
-  -V, --version              Print version
+  -d, --dsn <dsn>
+          Database connection string with optional TLS parameters
+
+          Format: <driver>://<user>:<pass>@tcp(<host>:<port>)/<db>?param1=value1&param2=value2
+
+          TLS Parameters (query string):
+          - sslmode: disable|require|verify-ca|verify-full (default: disable)
+          - sslrootcert or sslca: Path to CA certificate file
+          - sslcert: Path to client certificate file
+          - sslkey: Path to client private key file
+
+          Examples:
+          postgres://user:pass@tcp(localhost:5432)/db?sslmode=require
+          mysql://root:secret@tcp(db.example.com:3306)/prod?sslmode=verify-full&sslca=/etc/ssl/ca.crt
+
+          [env: DBPULSE_DSN=]
+
+  -i, --interval <interval>
+          number of seconds between checks
+
+          [env: DBPULSE_INTERVAL=]
+          [default: 30]
+
+  -l, --listen <IP>
+          IP address to bind to (default: [::]:port, accepts both IPv6 and IPv4)
+
+          [env: DBPULSE_LISTEN=]
+
+  -p, --port <port>
+          listening port for /metrics
+
+          [env: DBPULSE_PORT=]
+          [default: 9300]
+
+  -r, --range <range>
+          The upper limit of the ID range
+
+          [env: DBPULSE_RANGE=]
+          [default: 100]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 ```
 
@@ -111,6 +150,62 @@ dbpulse --dsn "postgres://postgres:secret@tcp(10.10.0.10)/dbpulse" -r 2880
 ```
 
 > the app tries to create the database if it does not exist (depends on the user permissions)
+
+## TLS/SSL Configuration
+
+TLS parameters are configured directly in the DSN query string:
+
+### TLS Modes
+
+- `disable` - No TLS encryption (default)
+- `require` - TLS required, no certificate verification
+- `verify-ca` - Verify server certificate against CA
+- `verify-full` - Verify certificate and hostname
+
+### DSN Parameters
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `sslmode` | TLS mode | `?sslmode=require` |
+| `sslrootcert` or `sslca` | Path to CA certificate | `&sslca=/etc/ssl/ca.crt` |
+| `sslcert` | Path to client certificate | `&sslcert=/etc/ssl/client.crt` |
+| `sslkey` | Path to client private key | `&sslkey=/etc/ssl/client.key` |
+
+### Examples
+
+**PostgreSQL with TLS (no verification):**
+```sh
+dbpulse --dsn "postgres://user:pass@tcp(db.example.com:5432)/mydb?sslmode=require"
+```
+
+**PostgreSQL with full certificate verification:**
+```sh
+dbpulse --dsn "postgres://user:pass@tcp(db.example.com:5432)/mydb?sslmode=verify-full&sslrootcert=/etc/ssl/certs/ca.crt"
+```
+
+**MySQL/MariaDB with TLS:**
+```sh
+dbpulse --dsn "mysql://user:pass@tcp(db.example.com:3306)/mydb?sslmode=require"
+```
+
+**MySQL with CA verification:**
+```sh
+dbpulse --dsn "mysql://user:pass@tcp(db.example.com:3306)/mydb?sslmode=verify-ca&sslca=/etc/ssl/ca.crt"
+```
+
+**With mutual TLS (client certificates):**
+```sh
+dbpulse --dsn "postgres://user:pass@tcp(db.example.com:5432)/mydb?sslmode=verify-full&sslrootcert=/etc/ssl/ca.crt&sslcert=/etc/ssl/client.crt&sslkey=/etc/ssl/client.key"
+```
+
+### TLS Metrics
+
+When TLS is enabled, dbpulse exposes additional metrics:
+- `dbpulse_tls_handshake_duration_seconds` - TLS handshake timing
+- `dbpulse_tls_connection_errors_total` - TLS-specific errors
+- `dbpulse_tls_info` - TLS version and cipher information
+
+See [grafana/README.md](grafana/README.md) for complete metrics documentation.
 
 ## Container Image
 
