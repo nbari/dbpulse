@@ -482,36 +482,25 @@ mod tests {
         );
 
         // Test warning threshold (30 days)
-        TLS_CERT_EXPIRY_DAYS
-            .with_label_values(&["mysql"])
-            .set(30);
-        assert_eq!(
-            TLS_CERT_EXPIRY_DAYS.with_label_values(&["mysql"]).get(),
-            30
-        );
+        TLS_CERT_EXPIRY_DAYS.with_label_values(&["mysql"]).set(30);
+        assert_eq!(TLS_CERT_EXPIRY_DAYS.with_label_values(&["mysql"]).get(), 30);
 
         // Test critical threshold (7 days)
-        TLS_CERT_EXPIRY_DAYS
-            .with_label_values(&["postgres"])
-            .set(7);
+        TLS_CERT_EXPIRY_DAYS.with_label_values(&["postgres"]).set(7);
         assert_eq!(
             TLS_CERT_EXPIRY_DAYS.with_label_values(&["postgres"]).get(),
             7
         );
 
         // Test expired certificate (negative days)
-        TLS_CERT_EXPIRY_DAYS
-            .with_label_values(&["mysql"])
-            .set(-10);
+        TLS_CERT_EXPIRY_DAYS.with_label_values(&["mysql"]).set(-10);
         assert_eq!(
             TLS_CERT_EXPIRY_DAYS.with_label_values(&["mysql"]).get(),
             -10
         );
 
         // Test expiring today
-        TLS_CERT_EXPIRY_DAYS
-            .with_label_values(&["postgres"])
-            .set(0);
+        TLS_CERT_EXPIRY_DAYS.with_label_values(&["postgres"]).set(0);
         assert_eq!(
             TLS_CERT_EXPIRY_DAYS.with_label_values(&["postgres"]).get(),
             0
@@ -521,15 +510,9 @@ mod tests {
     #[test]
     fn test_tls_cert_expiry_multiple_databases() {
         // Test tracking multiple databases simultaneously
-        TLS_CERT_EXPIRY_DAYS
-            .with_label_values(&["db1"])
-            .set(90);
-        TLS_CERT_EXPIRY_DAYS
-            .with_label_values(&["db2"])
-            .set(45);
-        TLS_CERT_EXPIRY_DAYS
-            .with_label_values(&["db3"])
-            .set(15);
+        TLS_CERT_EXPIRY_DAYS.with_label_values(&["db1"]).set(90);
+        TLS_CERT_EXPIRY_DAYS.with_label_values(&["db2"]).set(45);
+        TLS_CERT_EXPIRY_DAYS.with_label_values(&["db3"]).set(15);
 
         assert_eq!(TLS_CERT_EXPIRY_DAYS.with_label_values(&["db1"]).get(), 90);
         assert_eq!(TLS_CERT_EXPIRY_DAYS.with_label_values(&["db2"]).get(), 45);
@@ -539,26 +522,20 @@ mod tests {
     #[test]
     fn test_tls_cert_expiry_update() {
         // Test that metric can be updated over time
-        TLS_CERT_EXPIRY_DAYS
-            .with_label_values(&["test_db"])
-            .set(90);
+        TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).set(90);
         assert_eq!(
             TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).get(),
             90
         );
 
         // Simulate time passing - certificate gets closer to expiry
-        TLS_CERT_EXPIRY_DAYS
-            .with_label_values(&["test_db"])
-            .set(60);
+        TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).set(60);
         assert_eq!(
             TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).get(),
             60
         );
 
-        TLS_CERT_EXPIRY_DAYS
-            .with_label_values(&["test_db"])
-            .set(30);
+        TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).set(30);
         assert_eq!(
             TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).get(),
             30

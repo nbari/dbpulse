@@ -548,13 +548,14 @@ fn parse_cert_expiry_date(date_str: &str) -> Option<i64> {
     let date_str = date_str.trim_end_matches(" GMT").trim();
 
     // Try parsing with chrono
-    if let Ok(expiry_date) = DateTime::parse_from_str(&format!("{date_str} +0000"), "%b %d %H:%M:%S %Y %z") {
-        let now = Utc::now();
-        let duration = expiry_date.signed_duration_since(now);
-        Some(duration.num_days())
-    } else {
-        None
-    }
+    DateTime::parse_from_str(&format!("{date_str} +0000"), "%b %d %H:%M:%S %Y %z").map_or(
+        None,
+        |expiry_date| {
+            let now = Utc::now();
+            let duration = expiry_date.signed_duration_since(now);
+            Some(duration.num_days())
+        },
+    )
 }
 
 #[cfg(test)]
@@ -613,7 +614,7 @@ mod tests {
 
         for date_str in invalid_dates {
             let days = parse_cert_expiry_date(date_str);
-            assert!(days.is_none(), "Should fail for: {}", date_str);
+            assert!(days.is_none(), "Should fail for: {date_str}");
         }
     }
 
@@ -653,7 +654,7 @@ mod tests {
 
         for date_str in examples {
             let days = parse_cert_expiry_date(date_str);
-            assert!(days.is_some(), "Should parse: {}", date_str);
+            assert!(days.is_some(), "Should parse: {date_str}");
         }
     }
 }
