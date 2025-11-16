@@ -11,7 +11,7 @@ use prometheus::{
 pub static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
 
 pub static PULSE: LazyLock<IntGauge> = LazyLock::new(|| {
-    register_int_gauge_with_registry!("dbpuse_pulse", "1 ok, 0 error", &REGISTRY)
+    register_int_gauge_with_registry!("dbpulse_pulse", "1 ok, 0 error", &REGISTRY)
         .expect("metric can be created")
 });
 
@@ -309,8 +309,8 @@ mod tests {
         // Check that our custom metrics are registered
         let metric_names: Vec<String> = metrics.iter().map(|m| m.name().to_string()).collect();
 
-        // Check for some expected metrics (note: PULSE has typo "dbpuse_pulse")
-        assert!(metric_names.contains(&"dbpuse_pulse".to_string()));
+        // Check for some expected metrics
+        assert!(metric_names.contains(&"dbpulse_pulse".to_string()));
         assert!(metric_names.contains(&"dbpulse_runtime".to_string()));
         assert!(metric_names.contains(&"dbpulse_errors_total".to_string()));
         assert!(metric_names.contains(&"dbpulse_operation_duration_seconds".to_string()));
