@@ -720,7 +720,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -845,7 +845,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -956,7 +956,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1071,7 +1071,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1178,7 +1178,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1283,7 +1283,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1388,7 +1388,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1570,10 +1570,13 @@
           "custom": {
             "axisLabel": "Pulse",
             "axisPlacement": "left",
+            "axisColorMode": "series",
             "drawStyle": "line",
             "lineWidth": 2,
             "showPoints": "never",
-            "spanNulls": false
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter",
+            "fillOpacity": 0
           },
           "mappings": [],
           "max": 1,
@@ -1596,8 +1599,8 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "Runtime (ms)"
+              "id": "byFrameRefID",
+              "options": "B"
             },
             "properties": [
               {
@@ -1607,6 +1610,22 @@
               {
                 "id": "custom.axisPlacement",
                 "value": "right"
+              },
+              {
+                "id": "custom.axisColorMode",
+                "value": "series"
+              },
+              {
+                "id": "custom.axisLabel",
+                "value": "Runtime (ms)"
+              },
+              {
+                "id": "custom.axisSoftMin",
+                "value": 0
+              },
+              {
+                "id": "custom.axisGridShow",
+                "value": true
               },
               {
                 "id": "custom.drawStyle",
@@ -1623,8 +1642,35 @@
               {
                 "id": "color",
                 "value": {
-                  "mode": "palette-classic"
+                  "fixedColor": "rgba(250, 189, 0, 1)",
+                  "mode": "fixed"
                 }
+              },
+              {
+                "id": "custom.axisLabelWidth",
+                "value": 80
+              },
+              {
+                "id": "min"
+              },
+              {
+                "id": "max"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.lineInterpolation",
+                "value": "stepBefore"
+              },
+              {
+                "id": "decimals",
+                "value": 0
               }
             ]
           }
@@ -1668,7 +1714,7 @@
             "uid": "${datasource}"
           },
           "expr": "dbpulse_runtime_last_milliseconds",
-          "legendFormat": "Runtime (ms) {{database}}",
+          "legendFormat": "Runtime (ms)",
           "refId": "B"
         }
       ],
@@ -1780,7 +1826,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1888,7 +1934,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -2102,7 +2148,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -2203,7 +2249,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -2309,7 +2355,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
