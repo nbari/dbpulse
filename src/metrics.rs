@@ -60,6 +60,30 @@ pub static TLS_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     .expect("metric can be created")
 });
 
+pub static DATABASE_VERSION_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    register_int_gauge_vec_with_registry!(
+        opts!(
+            "dbpulse_database_version_info",
+            "Database server version info (value is always 1)"
+        ),
+        &["database", "version"],
+        &REGISTRY
+    )
+    .expect("metric can be created")
+});
+
+pub static DATABASE_UPTIME_SECONDS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    register_int_gauge_vec_with_registry!(
+        opts!(
+            "dbpulse_database_uptime_seconds",
+            "How long (in seconds) the database has been up"
+        ),
+        &["database"],
+        &REGISTRY
+    )
+    .expect("metric can be created")
+});
+
 // Critical Priority Metrics
 pub static DB_ERRORS: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec_with_registry!(
@@ -286,6 +310,12 @@ mod tests {
         TLS_INFO
             .with_label_values(&["postgres", "TLSv1.3", "AES256-GCM-SHA384"])
             .set(1);
+        DATABASE_VERSION_INFO
+            .with_label_values(&["postgres", "PostgreSQL 16.0"])
+            .set(1);
+        DATABASE_UPTIME_SECONDS
+            .with_label_values(&["mysql"])
+            .set(12345);
     }
 
     #[test]

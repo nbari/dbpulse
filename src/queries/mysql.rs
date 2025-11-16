@@ -166,6 +166,19 @@ pub async fn test_rw_with_table(
         .await
         .context("Failed to fetch database version")?;
 
+    // Get database uptime (SHOW GLOBAL STATUS LIKE 'Uptime')
+    let uptime_seconds = sqlx::query("SHOW GLOBAL STATUS LIKE 'Uptime'")
+        .fetch_optional(&mut conn)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|row| {
+            row.try_get::<String, _>(1)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .or_else(|| row.try_get::<i64, _>(1).ok())
+        });
+
     // check if db is in read-only mode
     // Use raw Row to handle both MariaDB (returns integer) and MySQL (may return string/integer)
     let row = sqlx::query("SELECT @@read_only;")
@@ -212,6 +225,7 @@ pub async fn test_rw_with_table(
                 "{} - Database is in read-only mode",
                 version.unwrap_or_default()
             ),
+            uptime_seconds,
             tls_metadata,
         });
     }
@@ -441,6 +455,7 @@ pub async fn test_rw_with_table(
 
     Ok(HealthCheckResult {
         version: version.context("Expected database version")?,
+        uptime_seconds,
         tls_metadata,
     })
 }

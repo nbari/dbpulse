@@ -8,6 +8,8 @@ use crate::tls::TlsMetadata;
 pub struct HealthCheckResult {
     /// Database version string
     pub version: String,
+    /// Database uptime in seconds (if available)
+    pub uptime_seconds: Option<i64>,
     /// TLS metadata (if TLS is enabled)
     pub tls_metadata: Option<TlsMetadata>,
 }
@@ -20,10 +22,12 @@ mod tests {
     fn test_health_check_result_without_tls() {
         let result = HealthCheckResult {
             version: "PostgreSQL 15.0".to_string(),
+            uptime_seconds: Some(1_000),
             tls_metadata: None,
         };
 
         assert_eq!(result.version, "PostgreSQL 15.0");
+        assert_eq!(result.uptime_seconds, Some(1_000));
         assert!(result.tls_metadata.is_none());
     }
 
@@ -39,10 +43,12 @@ mod tests {
 
         let result = HealthCheckResult {
             version: "MySQL 8.0.33".to_string(),
+            uptime_seconds: Some(42),
             tls_metadata: Some(tls_metadata),
         };
 
         assert_eq!(result.version, "MySQL 8.0.33");
+        assert_eq!(result.uptime_seconds, Some(42));
         assert!(result.tls_metadata.is_some());
         let tls = result.tls_metadata.as_ref().unwrap();
         assert_eq!(tls.version.as_ref().unwrap(), "TLSv1.3");
@@ -53,11 +59,13 @@ mod tests {
     fn test_health_check_result_clone() {
         let result = HealthCheckResult {
             version: "PostgreSQL 14.5".to_string(),
+            uptime_seconds: None,
             tls_metadata: None,
         };
 
         let cloned = result.clone();
         assert_eq!(cloned.version, result.version);
+        assert_eq!(cloned.uptime_seconds, result.uptime_seconds);
         assert!(cloned.tls_metadata.is_none());
     }
 
@@ -65,6 +73,7 @@ mod tests {
     fn test_health_check_result_debug() {
         let result = HealthCheckResult {
             version: "MySQL 8.0".to_string(),
+            uptime_seconds: None,
             tls_metadata: None,
         };
 
@@ -77,6 +86,7 @@ mod tests {
     fn test_health_check_result_empty_version() {
         let result = HealthCheckResult {
             version: String::new(),
+            uptime_seconds: None,
             tls_metadata: None,
         };
 
@@ -96,6 +106,7 @@ mod tests {
 
         let result = HealthCheckResult {
             version: "PostgreSQL 13.0 in recovery mode".to_string(),
+            uptime_seconds: Some(900),
             tls_metadata: Some(tls_metadata),
         };
 
@@ -110,6 +121,7 @@ mod tests {
     fn test_health_check_result_mysql_read_only() {
         let result = HealthCheckResult {
             version: "MySQL 8.0.30 read-only".to_string(),
+            uptime_seconds: None,
             tls_metadata: None,
         };
 
@@ -120,6 +132,7 @@ mod tests {
     fn test_health_check_result_version_with_special_chars() {
         let result = HealthCheckResult {
             version: "PostgreSQL 15.0 (Ubuntu 15.0-1.pgdg22.04+1)".to_string(),
+            uptime_seconds: None,
             tls_metadata: None,
         };
 

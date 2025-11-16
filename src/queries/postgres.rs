@@ -156,6 +156,15 @@ pub async fn test_rw_with_table(
         .await
         .context("Failed to fetch database version")?;
 
+    // Get database uptime (seconds since postmaster start)
+    let uptime_seconds = sqlx::query_scalar::<_, i64>(
+        "SELECT EXTRACT(EPOCH FROM NOW() - pg_postmaster_start_time())::bigint",
+    )
+    .fetch_optional(&mut conn)
+    .await
+    .ok()
+    .flatten();
+
     // Query to check if the database is in recovery (read-only)
     let is_in_recovery: (bool,) = sqlx::query_as("SELECT pg_is_in_recovery();")
         .fetch_one(&mut conn)
@@ -190,6 +199,7 @@ pub async fn test_rw_with_table(
                 "{} - Database is in recovery mode",
                 version.unwrap_or_default()
             ),
+            uptime_seconds,
             tls_metadata,
         });
     }
@@ -206,6 +216,7 @@ pub async fn test_rw_with_table(
                 "{} - Transaction read-only mode enabled",
                 version.unwrap_or_default()
             ),
+            uptime_seconds,
             tls_metadata,
         });
     }
@@ -466,6 +477,7 @@ pub async fn test_rw_with_table(
 
     Ok(HealthCheckResult {
         version: version.context("Expected database version")?,
+        uptime_seconds,
         tls_metadata,
     })
 }
