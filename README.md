@@ -211,6 +211,8 @@ dbpulse exposes comprehensive Prometheus-compatible metrics on the `/metrics` en
 | `dbpulse_iterations_total` | Counter | Total checks by status (success/error) |
 | `dbpulse_last_success_timestamp_seconds` | Gauge | Unix timestamp of last successful check |
 | `dbpulse_database_readonly` | Gauge | Read-only mode indicator (1=read-only, 0=read-write) |
+| `dbpulse_database_version_info` | Gauge | Value `1` with `version` label describing DB server build |
+| `dbpulse_database_uptime_seconds` | Gauge | How long the database has been up (seconds) |
 
 ### Performance Metrics
 

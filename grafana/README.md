@@ -63,6 +63,29 @@ histogram_quantile(0.95, rate(dbpulse_runtime_bucket[5m]))
 histogram_quantile(0.50, rate(dbpulse_runtime_bucket[5m]))
 ```
 
+#### `dbpulse_database_version_info` (Gauge)
+**Description:** Exposes the reported database version as a label (`version`) with a constant value of `1`.
+
+**Use Case:** Surface the current DB engine version in Stat panels or annotations.
+
+**Query Examples:**
+```promql
+# Show the latest version string (Grafana Stat panel title can use {{version}})
+dbpulse_database_version_info{database="postgres"}
+```
+
+#### `dbpulse_database_uptime_seconds` (Gauge)
+**Description:** How long (in seconds) the database has been up (`pg_postmaster_start_time` or `SHOW GLOBAL STATUS LIKE 'Uptime'`).
+
+**Query Examples:**
+```promql
+# Current uptime in hours
+dbpulse_database_uptime_seconds{database="mysql"} / 3600
+
+# Alert if DB restarted in last 10 minutes
+dbpulse_database_uptime_seconds < 600
+```
+
 ---
 
 ### Error Classification Metrics

@@ -8,8 +8,9 @@ use std::net::IpAddr;
 use tokio::{net::TcpListener, sync::mpsc, task, time};
 
 use crate::metrics::{
-    DB_ERRORS, DB_READONLY, ITERATIONS_TOTAL, LAST_SUCCESS, PANICS_RECOVERED, PULSE, RUNTIME,
-    TLS_CONNECTION_ERRORS, TLS_INFO, encode_metrics,
+    DATABASE_UPTIME_SECONDS, DATABASE_VERSION_INFO, DB_ERRORS, DB_READONLY, ITERATIONS_TOTAL,
+    LAST_SUCCESS, PANICS_RECOVERED, PULSE, RUNTIME, TLS_CONNECTION_ERRORS, TLS_INFO,
+    encode_metrics,
 };
 use crate::queries::{mysql, postgres};
 use crate::tls::TlsConfig;
@@ -23,6 +24,8 @@ struct Pulse {
     tls_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tls_cipher: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uptime_seconds: Option<i64>,
 }
 
 /// Start the monitoring service
@@ -144,6 +147,16 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                     match postgres::test_rw(&dsn, now, range, &tls).await {
                         Ok(result) => {
                             result.version.clone_into(&mut pulse.version);
+                            pulse.uptime_seconds = result.uptime_seconds;
+
+                            DATABASE_VERSION_INFO
+                                .with_label_values(&["postgres", result.version.as_str()])
+                                .set(1);
+                            if let Some(uptime) = result.uptime_seconds {
+                                DATABASE_UPTIME_SECONDS
+                                    .with_label_values(&["postgres"])
+                                    .set(uptime);
+                            }
                             PULSE.set(1);
 
                             // Record successful iteration
@@ -225,6 +238,16 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                 "mysql" => match mysql::test_rw(&dsn, now, range, &tls).await {
                     Ok(result) => {
                         result.version.clone_into(&mut pulse.version);
+                        pulse.uptime_seconds = result.uptime_seconds;
+
+                        DATABASE_VERSION_INFO
+                            .with_label_values(&["mysql", result.version.as_str()])
+                            .set(1);
+                        if let Some(uptime) = result.uptime_seconds {
+                            DATABASE_UPTIME_SECONDS
+                                .with_label_values(&["mysql"])
+                                .set(uptime);
+                        }
                         PULSE.set(1);
 
                         // Record successful iteration
@@ -401,6 +424,7 @@ mod tests {
         assert_eq!(pulse.version, "");
         assert!(pulse.tls_version.is_none());
         assert!(pulse.tls_cipher.is_none());
+        assert!(pulse.uptime_seconds.is_none());
     }
 
     #[test]
@@ -411,6 +435,7 @@ mod tests {
             version: "PostgreSQL 15.0".to_string(),
             tls_version: Some("TLSv1.3".to_string()),
             tls_cipher: Some("AES256-GCM-SHA384".to_string()),
+            uptime_seconds: Some(3600),
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -418,6 +443,7 @@ mod tests {
         assert!(json.contains("\"version\":\"PostgreSQL 15.0\""));
         assert!(json.contains("\"tls_version\":\"TLSv1.3\""));
         assert!(json.contains("\"tls_cipher\":\"AES256-GCM-SHA384\""));
+        assert!(json.contains("\"uptime_seconds\":3600"));
     }
 
     #[test]
@@ -428,6 +454,7 @@ mod tests {
             version: "MySQL 8.0".to_string(),
             tls_version: None,
             tls_cipher: None,
+            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -436,6 +463,7 @@ mod tests {
         // These fields should be omitted when None (skip_serializing_if)
         assert!(!json.contains("tls_version"));
         assert!(!json.contains("tls_cipher"));
+        assert!(!json.contains("uptime_seconds"));
     }
 
     #[test]
@@ -445,7 +473,8 @@ mod tests {
             "time": "2024-01-01T00:00:00Z",
             "version": "PostgreSQL 15.0",
             "tls_version": "TLSv1.3",
-            "tls_cipher": "AES256-GCM-SHA384"
+            "tls_cipher": "AES256-GCM-SHA384",
+            "uptime_seconds": 600
         }"#;
 
         let pulse: Pulse = serde_json::from_str(json).unwrap();
@@ -454,6 +483,7 @@ mod tests {
         assert_eq!(pulse.version, "PostgreSQL 15.0");
         assert_eq!(pulse.tls_version, Some("TLSv1.3".to_string()));
         assert_eq!(pulse.tls_cipher, Some("AES256-GCM-SHA384".to_string()));
+        assert_eq!(pulse.uptime_seconds, Some(600));
     }
 
     #[test]
@@ -470,6 +500,7 @@ mod tests {
         assert_eq!(pulse.version, "MySQL 8.0");
         assert!(pulse.tls_version.is_none());
         assert!(pulse.tls_cipher.is_none());
+        assert!(pulse.uptime_seconds.is_none());
     }
 
     #[test]
@@ -480,6 +511,7 @@ mod tests {
             version: "PostgreSQL 14.0".to_string(),
             tls_version: Some("TLSv1.2".to_string()),
             tls_cipher: None,
+            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -495,6 +527,7 @@ mod tests {
             version: "PostgreSQL 14.0".to_string(),
             tls_version: None,
             tls_cipher: Some("AES128-SHA".to_string()),
+            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -525,6 +558,7 @@ mod tests {
             version: "PostgreSQL 15.0".to_string(),
             tls_version: None,
             tls_cipher: None,
+            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -539,6 +573,7 @@ mod tests {
             version: "PostgreSQL 15.0".to_string(),
             tls_version: None,
             tls_cipher: None,
+            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -553,6 +588,7 @@ mod tests {
             version: String::new(),
             tls_version: Some(String::new()),
             tls_cipher: Some(String::new()),
+            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -622,6 +658,7 @@ mod tests {
             version: "PostgreSQL 15.0".to_string(),
             tls_version: None,
             tls_cipher: None,
+            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -636,6 +673,7 @@ mod tests {
             version: "PostgreSQL 15.0 \"special\" <tags> & symbols".to_string(),
             tls_version: None,
             tls_cipher: None,
+            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -655,6 +693,7 @@ mod tests {
             version: "PostgreSQL 15.0 🚀 数据库".to_string(),
             tls_version: Some("TLSv1.3 ✓".to_string()),
             tls_cipher: Some("AES256 🔒".to_string()),
+            uptime_seconds: Some(123),
         };
 
         let json = serde_json::to_string(&pulse).unwrap();

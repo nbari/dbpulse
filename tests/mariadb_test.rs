@@ -17,7 +17,7 @@ async fn test_mariadb_basic_connection() {
     assert!(result.is_ok(), "Failed to connect to MariaDB: {result:?}");
 
     let health = result.unwrap();
-    assert!(!health.version.is_empty(), "Version should not be empty");
+    assert_version_and_uptime("MariaDB", &health);
     assert!(
         health.version.contains("MariaDB"),
         "Should contain MariaDB in version"
@@ -39,7 +39,8 @@ async fn test_mariadb_read_write_operations() {
     for i in 0..5 {
         let table_name = test_table_name(&format!("test_mariadb_read_write_operations_{i}"));
         let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
-        assert!(result.is_ok(), "Iteration {i}: {result:?}");
+        let health = result.unwrap_or_else(|e| panic!("Iteration {i}: {e:?}"));
+        assert_version_and_uptime("MariaDB", &health);
     }
 }
 
@@ -57,7 +58,8 @@ async fn test_mariadb_transaction_rollback() {
 
     // This tests that transaction rollback works correctly
     let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
-    assert!(result.is_ok(), "Transaction test failed: {result:?}");
+    let health = result.unwrap_or_else(|e| panic!("Transaction test failed: {e:?}"));
+    assert_version_and_uptime("MariaDB", &health);
 }
 
 #[tokio::test]
@@ -84,7 +86,10 @@ async fn test_mariadb_concurrent_connections() {
     // Wait for all to complete
     for handle in handles {
         let result = handle.await.expect("Task panicked");
-        assert!(result.is_ok(), "Concurrent test failed: {result:?}");
+        match result {
+            Ok(health) => assert_version_and_uptime("MariaDB", &health),
+            Err(e) => panic!("Concurrent test failed: {e:?}"),
+        }
     }
 }
 
@@ -103,7 +108,8 @@ async fn test_mariadb_with_different_ranges() {
     for range in [10, 50, 100, 500, 1000] {
         let table_name = test_table_name(&format!("test_mariadb_with_different_ranges_{range}"));
         let result = mysql::test_rw_with_table(&dsn, now, range, &tls, &table_name).await;
-        assert!(result.is_ok(), "Range {range} failed: {result:?}");
+        let health = result.unwrap_or_else(|e| panic!("Range {range} failed: {e:?}"));
+        assert_version_and_uptime("MariaDB", &health);
     }
 }
 
@@ -118,6 +124,7 @@ async fn test_mariadb_tls_disable() {
     assert!(result.is_ok(), "TLS Disable failed: {result:?}");
 
     let health = result.unwrap();
+    assert_version_and_uptime("MariaDB", &health);
     assert!(
         health.tls_metadata.is_none(),
         "TLS metadata should be None when disabled"
@@ -137,6 +144,7 @@ async fn test_mariadb_tls_require() {
     // That's expected in local test environments
     match result {
         Ok(health) => {
+            assert_version_and_uptime("MariaDB", &health);
             println!("TLS connection successful");
             if let Some(ref tls_meta) = health.tls_metadata {
                 println!("TLS Version: {:?}", tls_meta.version);
@@ -168,7 +176,8 @@ async fn test_mariadb_database_creation() {
     let result = test_mariadb_connection_with_table(dsn_str, &table_name).await;
 
     // Should succeed by creating the database
-    assert!(result.is_ok(), "Database auto-creation failed: {result:?}");
+    let health = result.unwrap_or_else(|e| panic!("Database auto-creation failed: {e:?}"));
+    assert_version_and_uptime("MariaDB", &health);
 }
 
 #[tokio::test]

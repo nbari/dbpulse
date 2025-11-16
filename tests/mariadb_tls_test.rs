@@ -62,6 +62,7 @@ async fn test_tls_disable() {
     assert!(result.is_ok(), "TLS Disable failed: {result:?}");
 
     let health = result.unwrap();
+    assert_version_and_uptime("MariaDB", &health);
     assert!(
         health.tls_metadata.is_none(),
         "TLS metadata should be None when disabled"
@@ -91,6 +92,7 @@ async fn test_tls_require() {
     assert!(result.is_ok(), "TLS Require failed: {result:?}");
 
     let health = result.unwrap();
+    assert_version_and_uptime("MariaDB", &health);
     assert!(
         health.tls_metadata.is_some(),
         "TLS metadata should be present when TLS is required"
@@ -136,6 +138,7 @@ async fn test_tls_verify_ca() {
     assert!(result.is_ok(), "TLS Verify-CA failed: {result:?}");
 
     let health = result.unwrap();
+    assert_version_and_uptime("MariaDB", &health);
     assert!(
         health.tls_metadata.is_some(),
         "TLS metadata should be present"
@@ -184,6 +187,7 @@ async fn test_tls_verify_identity() {
     assert!(result.is_ok(), "TLS Verify-Identity failed: {result:?}");
 
     let health = result.unwrap();
+    assert_version_and_uptime("MariaDB", &health);
     assert!(
         health.tls_metadata.is_some(),
         "TLS metadata should be present"
@@ -227,6 +231,7 @@ async fn test_tls_multiple_connections() {
         assert!(result.is_ok(), "Connection {i} failed: {result:?}");
 
         let health = result.unwrap();
+        assert_version_and_uptime("MariaDB", &health);
         assert!(health.tls_metadata.is_some());
     }
 }
@@ -284,6 +289,7 @@ async fn test_tls_connection_info() {
     assert!(result.is_ok(), "TLS connection failed: {result:?}");
 
     let health = result.unwrap();
+    assert_version_and_uptime("MariaDB", &health);
     println!("Database Version: {}", health.version);
 
     if let Some(tls_meta) = &health.tls_metadata {
@@ -328,6 +334,7 @@ async fn test_tls_cipher_suite() {
     assert!(result.is_ok(), "TLS connection failed: {result:?}");
 
     let health = result.unwrap();
+    assert_version_and_uptime("MariaDB", &health);
     if let Some(tls_meta) = &health.tls_metadata
         && let Some(cipher) = &tls_meta.cipher
     {

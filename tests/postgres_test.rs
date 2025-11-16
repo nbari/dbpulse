@@ -24,7 +24,7 @@ async fn test_postgres_basic_connection() {
     );
 
     let health = result.unwrap();
-    assert!(!health.version.is_empty(), "Version should not be empty");
+    assert_version_and_uptime("PostgreSQL", &health);
     assert!(
         health.version.chars().any(|c| c.is_ascii_digit()),
         "Should contain version number"
@@ -46,7 +46,8 @@ async fn test_postgres_read_write_operations() {
     for i in 0..5 {
         let table_name = test_table_name(&format!("test_postgres_read_write_operations_{i}"));
         let result = postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
-        assert!(result.is_ok(), "Iteration {i}: {result:?}");
+        let health = result.unwrap_or_else(|e| panic!("Iteration {i} failed: {e:?}"));
+        assert_version_and_uptime("PostgreSQL", &health);
     }
 }
 
@@ -64,7 +65,8 @@ async fn test_postgres_transaction_rollback() {
 
     // This tests that transaction rollback works correctly
     let result = postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
-    assert!(result.is_ok(), "Transaction test failed: {result:?}");
+    let health = result.unwrap_or_else(|e| panic!("Transaction test failed: {e:?}"));
+    assert_version_and_uptime("PostgreSQL", &health);
 }
 
 #[tokio::test]
@@ -91,7 +93,10 @@ async fn test_postgres_concurrent_connections() {
     // Wait for all to complete
     for handle in handles {
         let result = handle.await.expect("Task panicked");
-        assert!(result.is_ok(), "Concurrent test failed: {result:?}");
+        match result {
+            Ok(health) => assert_version_and_uptime("PostgreSQL", &health),
+            Err(e) => panic!("Concurrent test failed: {e:?}"),
+        }
     }
 }
 
@@ -110,7 +115,8 @@ async fn test_postgres_with_different_ranges() {
     for range in [10, 50, 100, 500, 1000] {
         let table_name = test_table_name(&format!("test_postgres_with_different_ranges_{range}"));
         let result = postgres::test_rw_with_table(&dsn, now, range, &tls, &table_name).await;
-        assert!(result.is_ok(), "Range {range} failed: {result:?}");
+        let health = result.unwrap_or_else(|e| panic!("Range {range} failed: {e:?}"));
+        assert_version_and_uptime("PostgreSQL", &health);
     }
 }
 
@@ -125,6 +131,7 @@ async fn test_postgres_tls_disable() {
     assert!(result.is_ok(), "TLS Disable failed: {result:?}");
 
     let health = result.unwrap();
+    assert_version_and_uptime("PostgreSQL", &health);
     assert!(
         health.tls_metadata.is_none(),
         "TLS metadata should be None when disabled"
@@ -144,6 +151,7 @@ async fn test_postgres_tls_require() {
     // That's expected in local test environments
     match result {
         Ok(health) => {
+            assert_version_and_uptime("PostgreSQL", &health);
             println!("TLS connection successful");
             if let Some(ref tls_meta) = health.tls_metadata {
                 println!("TLS Version: {:?}", tls_meta.version);
@@ -174,7 +182,8 @@ async fn test_postgres_database_creation() {
     let result = test_postgres_connection_with_table(dsn_str, &table_name).await;
 
     // Should succeed by creating the database
-    assert!(result.is_ok(), "Database auto-creation failed: {result:?}");
+    let health = result.unwrap_or_else(|e| panic!("Database auto-creation failed: {e:?}"));
+    assert_version_and_uptime("PostgreSQL", &health);
 }
 
 #[tokio::test]
@@ -203,6 +212,7 @@ async fn test_postgres_version_info() {
     assert!(result.is_ok());
 
     let health = result.unwrap();
+    assert_version_and_uptime("PostgreSQL", &health);
     println!("PostgreSQL version: {}", health.version);
 
     // Version should contain version number

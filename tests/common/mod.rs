@@ -108,3 +108,18 @@ pub fn test_table_name(test_name: &str) -> String {
 
     format!("dbpulse_rw_test_{:x}", hasher.finish())
 }
+
+/// Assert that a health check result contains version and uptime information
+pub fn assert_version_and_uptime(db_label: &str, health: &HealthCheckResult) {
+    assert!(
+        !health.version.is_empty(),
+        "{db_label} version should not be empty"
+    );
+    let uptime = health
+        .uptime_seconds
+        .unwrap_or_else(|| panic!("{db_label} should report uptime_seconds"));
+    assert!(
+        uptime >= 0,
+        "{db_label} uptime_seconds must be non-negative: {uptime}"
+    );
+}
