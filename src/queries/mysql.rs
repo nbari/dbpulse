@@ -141,11 +141,20 @@ pub async fn test_rw_with_table(
     };
 
     // Set query timeouts to prevent hanging on locked tables
-    // MySQL uses milliseconds for max_execution_time
-    sqlx::query("SET SESSION max_execution_time = 5000")
+    // Try MySQL variable first (max_execution_time in milliseconds)
+    // If that fails, try MariaDB variable (max_statement_time in seconds)
+    if sqlx::query("SET SESSION max_execution_time = 5000")
         .execute(&mut conn)
         .await
-        .context("Failed to set max_execution_time")?;
+        .is_err()
+    {
+        // MariaDB uses max_statement_time in seconds instead
+        let _ = sqlx::query("SET SESSION max_statement_time = 5")
+            .execute(&mut conn)
+            .await;
+    }
+
+    // Set lock wait timeout (common to both MySQL and MariaDB)
     sqlx::query("SET SESSION innodb_lock_wait_timeout = 2")
         .execute(&mut conn)
         .await
