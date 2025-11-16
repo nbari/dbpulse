@@ -36,14 +36,20 @@
     },
     {
       "type": "panel",
-      "id": "bargauge",
-      "name": "Bar gauge",
+      "id": "stat",
+      "name": "Stat",
       "version": ""
     },
     {
       "type": "panel",
-      "id": "stat",
-      "name": "Stat",
+      "id": "table",
+      "name": "Table",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "piechart",
+      "name": "Pie chart",
       "version": ""
     }
   ],
@@ -89,7 +95,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Binary health indicator. 1 = UP, 0 = DOWN",
+      "description": "Quick pulse check - Is the database alive and accepting writes? Like a paramedic checking vitals, this verifies the database responds to real read/write operations.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -144,7 +150,7 @@
           "calcs": ["lastNotNull"],
           "fields": ""
         },
-        "textMode": "value_and_name"
+        "textMode": "value"
       },
       "pluginVersion": "11.0.0",
       "targets": [
@@ -165,72 +171,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Success rate percentage over last 5 minutes",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 100,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 90
-              },
-              {
-                "color": "green",
-                "value": 99
-              }
-            ]
-          },
-          "unit": "percent"
-        }
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 4,
-        "x": 4,
-        "y": 1
-      },
-      "id": 2,
-      "options": {
-        "orientation": "auto",
-        "reduceOptions": {
-          "values": false,
-          "calcs": ["lastNotNull"],
-          "fields": ""
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true
-      },
-      "pluginVersion": "11.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "rate(dbpulse_iterations_total{status=\"success\"}[5m]) / rate(dbpulse_iterations_total[5m]) * 100",
-          "refId": "A"
-        }
-      ],
-      "title": "Success Rate",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "description": "Read-only mode indicator. 1 = read-only, 0 = read-write",
+      "description": "Database write capability - R/W means accepting writes (primary), READ-ONLY means replica/standby/maintenance mode. No data means healthy read-write primary.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -271,7 +212,7 @@
       "gridPos": {
         "h": 5,
         "w": 4,
-        "x": 8,
+        "x": 4,
         "y": 1
       },
       "id": 3,
@@ -307,7 +248,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Time since last successful check",
+      "description": "How long since the database last passed a complete health check (connection, read, write, transaction test). Low values indicate healthy continuous operation.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -337,7 +278,7 @@
       "gridPos": {
         "h": 5,
         "w": 6,
-        "x": 12,
+        "x": 8,
         "y": 1
       },
       "id": 4,
@@ -373,7 +314,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Currently active database connections",
+      "description": "Database connections currently open by dbpulse. Should normally be 0 between checks. Red (1+) during active health check is normal.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -398,21 +339,22 @@
       },
       "gridPos": {
         "h": 5,
-        "w": 6,
-        "x": 18,
+        "w": 4,
+        "x": 14,
         "y": 1
       },
       "id": 5,
       "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "values": false,
           "calcs": ["lastNotNull"],
           "fields": ""
         },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "text": {}
+        "textMode": "value"
       },
       "pluginVersion": "11.0.0",
       "targets": [
@@ -426,6 +368,71 @@
         }
       ],
       "title": "Active Connections",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Percentage of successful health checks in the last 5 minutes. Should be near 100%. Values below 99% indicate intermittent database issues.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 90
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "rate(dbpulse_iterations_total{status=\"success\"}[5m]) / rate(dbpulse_iterations_total[5m]) * 100",
+          "refId": "A"
+        }
+      ],
+      "title": "Success Rate",
       "type": "gauge"
     },
     {
@@ -447,7 +454,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Overall health check latency percentiles",
+      "description": "Complete health check duration from connection to cleanup. Includes all operations: connect, read, write, transaction test, and cleanup. Typical: 50-200ms.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -549,7 +556,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Average duration by database operation type",
+      "description": "Breakdown of time spent on individual operations (connect, insert, select, transaction_test, cleanup). Helps identify which operation is slow.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -638,7 +645,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Error rate by error type over time",
+      "description": "Rate of errors by category (authentication, timeout, connection, transaction, query). Stacked view shows total error rate and breakdown by type.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -717,7 +724,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Success and error iteration counts",
+      "description": "Rate of health check iterations by outcome (success vs error). Green area should dominate. Growing red area indicates database problems.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -801,7 +808,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Total count of panics recovered",
+      "description": "Internal panic recovery count. Should always be zero. Non-zero indicates bugs in dbpulse that need investigation.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -880,7 +887,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Error count breakdown by type",
+      "description": "Distribution of errors by category. Helps identify if errors are concentrated in one area (auth, timeout, connection, etc.).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -956,7 +963,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Average connection hold time",
+      "description": "How long database connections are held open during health checks. Shorter is better - indicates efficient connection usage and cleanup.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1048,7 +1055,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Rows affected by insert and delete operations",
+      "description": "Rate of database write activity from health checks. Inserts verify write capability, deletes keep table size bounded. Steady rate indicates consistent monitoring.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1132,7 +1139,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Table size in megabytes",
+      "description": "Size of the monitoring table (dbpulse_rw). Automatic cleanup keeps this small. Growth indicates cleanup issues or very frequent checks.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1215,7 +1222,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Approximate row count in monitoring table",
+      "description": "Number of rows in monitoring table. Old records (>1 hour) are automatically deleted. High counts may indicate cleanup issues or disabled hourly table drop.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1298,7 +1305,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Replication lag in seconds for replica databases",
+      "description": "Replication lag on replica/standby databases. Only appears for read-only databases. No data means this is a primary (good). Low values (<5s) indicate healthy replication.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1322,6 +1329,7 @@
             }
           },
           "mappings": [],
+          "noValue": "No replication lag - this is a primary database",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1390,7 +1398,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Number of queries currently blocking other queries",
+      "description": "Queries currently blocking others due to locks. Zero is normal and expected. Non-zero indicates lock contention (DDL, long transactions, or table locks).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1456,7 +1464,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Total database size in bytes",
+      "description": "Total database size including all tables and indexes. Useful for capacity planning. No data means size query not supported or insufficient permissions.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1536,7 +1544,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "TLS handshake duration by database",
+      "description": "Time to complete TLS handshake during connection. Only appears when TLS is enabled (sslmode=require/verify-ca/verify-full). No data means TLS is disabled.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1560,6 +1568,7 @@
             }
           },
           "mappings": [],
+          "noValue": "TLS is disabled",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1620,7 +1629,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "TLS connection errors rate",
+      "description": "Rate of TLS-specific connection errors (handshake failures, certificate issues). Only relevant when TLS is enabled. No data means no TLS errors (good) or TLS disabled.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1644,6 +1653,7 @@
             }
           },
           "mappings": [],
+          "noValue": "No TLS errors - TLS disabled or working correctly",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1699,11 +1709,18 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "TLS version and cipher suite in use",
+      "description": "Active TLS connection details (version: TLSv1.2/1.3, cipher suite). Only populated when TLS is enabled. No data means TLS is disabled (sslmode=disable).",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
           },
           "mappings": [],
           "thresholds": {
@@ -1715,7 +1732,21 @@
               }
             ]
           }
-        }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 6,
@@ -1725,16 +1756,15 @@
       },
       "id": 18,
       "options": {
-        "displayMode": "gradient",
-        "minVizHeight": 10,
-        "minVizWidth": 0,
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "values": false,
-          "calcs": ["lastNotNull"],
-          "fields": ""
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
         },
-        "showUnfilled": true
+        "showHeader": true,
+        "emptyFieldsText": "TLS is disabled (sslmode=disable)"
       },
       "pluginVersion": "11.0.0",
       "targets": [
@@ -1744,12 +1774,37 @@
             "uid": "${datasource}"
           },
           "expr": "dbpulse_tls_info",
-          "legendFormat": "{{database}} - {{version}} - {{cipher}}",
+          "format": "table",
+          "instant": true,
           "refId": "A"
         }
       ],
       "title": "TLS Connection Info",
-      "type": "bargauge"
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "instance": true,
+              "job": true
+            },
+            "indexByName": {
+              "database": 0,
+              "version": 1,
+              "cipher": 2
+            },
+            "renameByName": {
+              "cipher": "TLS Cipher",
+              "database": "Database",
+              "version": "TLS Version"
+            }
+          }
+        }
+      ],
+      "type": "table"
     }
   ],
   "refresh": "10s",
