@@ -1,18 +1,21 @@
-## 0.7.1 (2025-11-xx)
+## 0.7.2 (2025-11-xx)
 
 ### Added
-* **Version & Uptime**
-  - New Prometheus gauges: `dbpulse_database_version_info` (version label, constant value) and `dbpulse_database_uptime_seconds`
+* **Version & Uptime Metrics**
+  - New gauges: `dbpulse_database_version_info`, `dbpulse_database_uptime_seconds`
   - PostgreSQL collector reads `pg_postmaster_start_time()`, MySQL/MariaDB uses `SHOW GLOBAL STATUS LIKE 'Uptime'`
-  - Pulse JSON log now includes `uptime_seconds` so CLI output and metrics stay in sync
-* **Grafana Overview Enhancements**
-  - Added stat panels for current database version and uptime
-  - Overview row resized to keep health, mode, version, uptime, last-success, connections, and success-rate visible together
+  - Pulse JSON log now includes `uptime_seconds` for CLI/metrics parity
+* **Runtime Metrics**
+  - Added `dbpulse_runtime_last_milliseconds` to capture the latest iteration runtime per database
+  - Grafana “Pulse & Runtime” panel overlays pulse state (0/1) with the runtime trace on a secondary axis
+* **Grafana Refresh**
+  - Cleaned dashboard export (inputs/requires/templating) so imports prompt for the datasource
+  - Overview rows now include database version, uptime, blocking queries, error rate, and pulse view
 
 ### Improved
-* All Postgres/MariaDB integration tests (plain + TLS) now validate non-empty versions and non-negative uptime via a shared helper
-* Queries return `HealthCheckResult` with `uptime_seconds`, ensuring downstream code has consistent metadata
-* README and Grafana docs list the new metrics with PromQL examples
+* Always refresh `dbpulse_table_rows` for both PostgreSQL and MySQL so row-count panels never go stale; Grafana panel now sums by `(database, table)`
+* All Postgres/MariaDB integration tests (plain + TLS) validate non-empty versions and non-negative uptime via a shared helper
+* README & Grafana docs list the new metrics with PromQL examples
 
 ## 0.7.0 (2025-11-16)
 

@@ -441,6 +441,23 @@ pub async fn test_rw_with_table(
         }
     }
 
+    // Always refresh table row gauge so Grafana panels don't go stale.
+    let count_sql = format!("SELECT COUNT(*) FROM {table_name}");
+    match sqlx::query_scalar::<_, i64>(&count_sql)
+        .fetch_optional(&mut conn)
+        .await
+    {
+        Ok(Some(row_count)) => TABLE_ROWS
+            .with_label_values(&["postgres", table_name])
+            .set(row_count),
+        Ok(None) => TABLE_ROWS
+            .with_label_values(&["postgres", table_name])
+            .set(0),
+        Err(e) => {
+            eprintln!("Failed to refresh postgres table row count: {e}");
+        }
+    }
+
     // Query table size in bytes (optional, but useful for monitoring)
     let size_sql = format!("SELECT pg_total_relation_size('{table_name}')");
     if let Ok(Some(table_bytes)) = sqlx::query_scalar::<_, i64>(&size_sql)

@@ -9,8 +9,8 @@ use tokio::{net::TcpListener, sync::mpsc, task, time};
 
 use crate::metrics::{
     DATABASE_UPTIME_SECONDS, DATABASE_VERSION_INFO, DB_ERRORS, DB_READONLY, ITERATIONS_TOTAL,
-    LAST_SUCCESS, PANICS_RECOVERED, PULSE, RUNTIME, TLS_CONNECTION_ERRORS, TLS_INFO,
-    encode_metrics,
+    LAST_RUNTIME_MS, LAST_SUCCESS, PANICS_RECOVERED, PULSE, RUNTIME, TLS_CONNECTION_ERRORS,
+    TLS_INFO, encode_metrics,
 };
 use crate::queries::{mysql, postgres};
 use crate::tls::TlsConfig;
@@ -335,6 +335,16 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
             let end = Utc::now();
             let runtime = end.signed_duration_since(now);
             pulse.runtime_ms = runtime.num_milliseconds();
+
+            let metric_db = match db_driver {
+                "postgres" | "postgresql" => "postgres",
+                "mysql" => "mysql",
+                other => other,
+            };
+
+            LAST_RUNTIME_MS
+                .with_label_values(&[metric_db])
+                .set(pulse.runtime_ms);
 
             if let Ok(serialized) = serde_json::to_string(&pulse) {
                 println!("{serialized}");
