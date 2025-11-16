@@ -1,5 +1,11 @@
 ## 0.6.4 (2025-11-16)
 
+### Fixed
+* **MariaDB Compatibility**: Fixed query timeout configuration to support both MySQL and MariaDB
+  - MySQL uses `max_execution_time` (milliseconds), MariaDB uses `max_statement_time` (seconds)
+  - Code now attempts MySQL variable first, falls back to MariaDB variable if not supported
+  - Ensures timeout protection works correctly on both database platforms
+
 ### Added
 * **Enhanced Database Health Monitoring**
   - Query timeout protection to prevent hanging on locked tables:
