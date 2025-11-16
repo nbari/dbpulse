@@ -338,10 +338,7 @@ mod tests {
         };
 
         assert_eq!(metadata.version.as_ref().unwrap(), "TLSv1.3");
-        assert_eq!(
-            metadata.cipher.as_ref().unwrap(),
-            "AES256-GCM-SHA384"
-        );
+        assert_eq!(metadata.cipher.as_ref().unwrap(), "AES256-GCM-SHA384");
         assert_eq!(
             metadata.cert_subject.as_ref().unwrap(),
             "CN=db.example.com,O=Example Corp,C=US"
@@ -378,8 +375,7 @@ mod tests {
             assert_eq!(
                 metadata.cert_expiry_days.unwrap(),
                 days,
-                "Failed for: {}",
-                description
+                "Failed for: {description}"
             );
         }
     }
@@ -390,7 +386,9 @@ mod tests {
         let metadata = TlsMetadata {
             version: Some("TLSv1.2".to_string()),
             cipher: Some("DHE-RSA-AES256-SHA".to_string()),
-            cert_subject: Some("/C=US/ST=California/L=San Francisco/O=Example/CN=mysql.example.com".to_string()),
+            cert_subject: Some(
+                "/C=US/ST=California/L=San Francisco/O=Example/CN=mysql.example.com".to_string(),
+            ),
             cert_issuer: Some("/C=US/O=DigiCert Inc/CN=DigiCert Global Root CA".to_string()),
             cert_expiry_days: Some(365),
         };
