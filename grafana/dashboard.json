@@ -626,7 +626,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 63
       },
       "id": 300,
       "panels": [],
@@ -682,7 +682,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 48
+        "y": 64
       },
       "id": 8,
       "options": {
@@ -757,7 +757,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 48
+        "y": 64
       },
       "id": 9,
       "options": {
@@ -845,7 +845,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 56
+        "y": 72
       },
       "id": 10,
       "options": {
@@ -900,7 +900,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 56
+        "y": 72
       },
       "id": 11,
       "options": {
@@ -1294,13 +1294,237 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Replication lag in seconds for replica databases",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "Lag",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 30
+              }
+            ]
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "id": 19,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max", "last"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "rate(dbpulse_replication_lag_seconds_sum[5m]) / rate(dbpulse_replication_lag_seconds_count[5m])",
+          "legendFormat": "{{database}} - Average",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, rate(dbpulse_replication_lag_seconds_bucket[5m]))",
+          "legendFormat": "{{database}} - P99",
+          "refId": "B"
+        }
+      ],
+      "title": "Replication Lag",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Number of queries currently blocking other queries",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 10,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "id": 20,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "dbpulse_blocking_queries",
+          "legendFormat": "{{database}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Blocking Queries",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Total database size in bytes",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1073741824
+              },
+              {
+                "color": "red",
+                "value": 10737418240
+              }
+            ]
+          },
+          "unit": "decbytes"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "id": 21,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "textMode": "value_and_name"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "dbpulse_database_size_bytes",
+          "legendFormat": "{{database}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Database Size",
+      "type": "stat"
+    },
+    {
       "collapsed": false,
       "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 48
       },
       "id": 500,
       "panels": [],
@@ -1352,7 +1576,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 33
+        "y": 49
       },
       "id": 16,
       "options": {
@@ -1440,7 +1664,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 33
+        "y": 49
       },
       "id": 17,
       "options": {
@@ -1497,7 +1721,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 41
+        "y": 57
       },
       "id": 18,
       "options": {
@@ -1561,7 +1785,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "DBPulse - Comprehensive Database Monitoring",
+  "title": "DBPulse",
   "uid": "dbpulse-dashboard",
   "version": 1,
   "weekStart": ""

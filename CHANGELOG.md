@@ -1,3 +1,53 @@
+## 0.6.4 (2025-11-16)
+
+### Added
+* **Enhanced Database Health Monitoring**
+  - Query timeout protection to prevent hanging on locked tables:
+    - PostgreSQL: `statement_timeout` (5s) and `lock_timeout` (2s)
+    - MySQL/MariaDB: `max_execution_time` (5000ms) and `innodb_lock_wait_timeout` (2s)
+  - Transaction read-only detection for PostgreSQL using `transaction_read_only` setting
+  - Replication lag monitoring for replica databases:
+    - PostgreSQL: Uses `pg_last_xact_replay_timestamp()` to measure replay lag
+    - MySQL/MariaDB: Uses `SHOW REPLICA STATUS` to get `Seconds_Behind_Source`
+  - Blocking query detection:
+    - PostgreSQL: Monitors `pg_stat_activity` for queries with `wait_event_type = 'Lock'`
+    - MySQL/MariaDB: Monitors `information_schema.processlist` for queries with lock states
+  - Database size monitoring:
+    - PostgreSQL: Uses `pg_database_size()` for total database size
+    - MySQL/MariaDB: Sums `data_length + index_length` from `information_schema.TABLES`
+* **New Prometheus Metrics**
+  - `dbpulse_replication_lag_seconds`: Histogram tracking replication lag for replica databases
+  - `dbpulse_blocking_queries`: Gauge showing current count of queries blocking others
+  - `dbpulse_database_size_bytes`: Gauge tracking total database size in bytes
+* **Grafana Dashboard Enhancements**
+  - Added Replication Lag panel (timeseries) showing average and P99 lag
+  - Added Blocking Queries panel (gauge) with thresholds (yellow: 1+, red: 5+)
+  - Added Database Size panel (stat) with thresholds (yellow: 1GB+, red: 10GB+)
+  - Updated dashboard layout: Connection & Data Operations section now at y: 15-48
+
+### Improved
+* Better detection of read-only databases:
+  - PostgreSQL now checks both `pg_is_in_recovery()` and `transaction_read_only` setting
+  - MySQL/MariaDB improved handling of both integer and string values for `@@read_only`
+* Enhanced error handling with proper context messages for timeout configurations
+* Optimized metrics collection with conditional queries based on database state
+* All operational metrics use best-effort pattern (`if let Ok(...)`) - never fail health checks
+* Graceful connection closing using `conn.close().await` instead of `drop()`:
+  - Prevents "Connection reset by peer" errors in database server logs
+  - Proper TCP connection termination with FIN packets
+  - Cleaner shutdown sequence for both PostgreSQL and MySQL/MariaDB
+
+### Documentation
+* Comprehensive README update with complete usage documentation:
+  - Detailed command-line options with environment variable alternatives
+  - DSN format specification and examples (PostgreSQL, MySQL, TLS configurations)
+  - Complete metrics reference organized by category (health, performance, operations, replication, errors, TLS)
+  - New sections: "What It Monitors" explaining health check operations and timeout protection
+  - Database permissions guide for PostgreSQL and MySQL/MariaDB
+  - Monitoring table schema and automatic cleanup behavior
+  - Deployment guides: Docker/Podman, Kubernetes, Systemd service
+* Updated CHANGELOG with detailed feature descriptions and implementation specifics
+
 ## 0.6.3 (2025-11-16)
 
 ### Changed
