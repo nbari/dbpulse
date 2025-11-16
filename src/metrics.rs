@@ -160,6 +160,18 @@ pub static LAST_SUCCESS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     .expect("metric can be created")
 });
 
+pub static LAST_RUNTIME_MS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    register_int_gauge_vec_with_registry!(
+        opts!(
+            "dbpulse_runtime_last_milliseconds",
+            "Runtime of the most recent health check iteration in milliseconds"
+        ),
+        &["database"],
+        &REGISTRY
+    )
+    .expect("metric can be created")
+});
+
 // Medium Priority Metrics
 pub static TABLE_SIZE_BYTES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec_with_registry!(

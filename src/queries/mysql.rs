@@ -417,6 +417,21 @@ pub async fn test_rw_with_table(
         }
     }
 
+    // Always refresh the row count gauge so dashboards stay current.
+    let count_sql = format!("SELECT COUNT(*) FROM {table_name}");
+    match sqlx::query_scalar::<_, i64>(&count_sql)
+        .fetch_optional(&mut conn)
+        .await
+    {
+        Ok(Some(row_count)) => TABLE_ROWS
+            .with_label_values(&["mysql", table_name])
+            .set(row_count),
+        Ok(None) => TABLE_ROWS.with_label_values(&["mysql", table_name]).set(0),
+        Err(e) => {
+            eprintln!("Failed to refresh mysql table row count: {e}");
+        }
+    }
+
     // Query table size in bytes (optional, but useful for monitoring)
     let size_sql = "SELECT data_length + index_length FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name = ?";
     if let Ok(Some(table_bytes)) = sqlx::query_scalar::<_, i64>(size_sql)
