@@ -437,4 +437,238 @@ mod tests {
         assert!(!json.contains("tls_version"));
         assert!(!json.contains("tls_cipher"));
     }
+
+    #[test]
+    fn test_pulse_deserialization_full() {
+        let json = r#"{
+            "runtime_ms": 123,
+            "time": "2024-01-01T00:00:00Z",
+            "version": "PostgreSQL 15.0",
+            "tls_version": "TLSv1.3",
+            "tls_cipher": "AES256-GCM-SHA384"
+        }"#;
+
+        let pulse: Pulse = serde_json::from_str(json).unwrap();
+        assert_eq!(pulse.runtime_ms, 123);
+        assert_eq!(pulse.time, "2024-01-01T00:00:00Z");
+        assert_eq!(pulse.version, "PostgreSQL 15.0");
+        assert_eq!(pulse.tls_version, Some("TLSv1.3".to_string()));
+        assert_eq!(pulse.tls_cipher, Some("AES256-GCM-SHA384".to_string()));
+    }
+
+    #[test]
+    fn test_pulse_deserialization_without_tls() {
+        let json = r#"{
+            "runtime_ms": 50,
+            "time": "2024-01-01T00:00:00Z",
+            "version": "MySQL 8.0"
+        }"#;
+
+        let pulse: Pulse = serde_json::from_str(json).unwrap();
+        assert_eq!(pulse.runtime_ms, 50);
+        assert_eq!(pulse.time, "2024-01-01T00:00:00Z");
+        assert_eq!(pulse.version, "MySQL 8.0");
+        assert!(pulse.tls_version.is_none());
+        assert!(pulse.tls_cipher.is_none());
+    }
+
+    #[test]
+    fn test_pulse_serialization_only_tls_version() {
+        let pulse = Pulse {
+            runtime_ms: 100,
+            time: "2024-01-01T00:00:00Z".to_string(),
+            version: "PostgreSQL 14.0".to_string(),
+            tls_version: Some("TLSv1.2".to_string()),
+            tls_cipher: None,
+        };
+
+        let json = serde_json::to_string(&pulse).unwrap();
+        assert!(json.contains("\"tls_version\":\"TLSv1.2\""));
+        assert!(!json.contains("tls_cipher"));
+    }
+
+    #[test]
+    fn test_pulse_serialization_only_tls_cipher() {
+        let pulse = Pulse {
+            runtime_ms: 100,
+            time: "2024-01-01T00:00:00Z".to_string(),
+            version: "PostgreSQL 14.0".to_string(),
+            tls_version: None,
+            tls_cipher: Some("AES128-SHA".to_string()),
+        };
+
+        let json = serde_json::to_string(&pulse).unwrap();
+        assert!(json.contains("\"tls_cipher\":\"AES128-SHA\""));
+        assert!(!json.contains("tls_version"));
+    }
+
+    #[test]
+    fn test_pulse_deserialization_partial_tls() {
+        let json = r#"{
+            "runtime_ms": 75,
+            "time": "2024-01-01T00:00:00Z",
+            "version": "MySQL 8.0",
+            "tls_version": "TLSv1.2"
+        }"#;
+
+        let pulse: Pulse = serde_json::from_str(json).unwrap();
+        assert_eq!(pulse.runtime_ms, 75);
+        assert_eq!(pulse.tls_version, Some("TLSv1.2".to_string()));
+        assert!(pulse.tls_cipher.is_none());
+    }
+
+    #[test]
+    fn test_pulse_zero_runtime() {
+        let pulse = Pulse {
+            runtime_ms: 0,
+            time: "2024-01-01T00:00:00Z".to_string(),
+            version: "PostgreSQL 15.0".to_string(),
+            tls_version: None,
+            tls_cipher: None,
+        };
+
+        let json = serde_json::to_string(&pulse).unwrap();
+        assert!(json.contains("\"runtime_ms\":0"));
+    }
+
+    #[test]
+    fn test_pulse_negative_runtime() {
+        let pulse = Pulse {
+            runtime_ms: -1,
+            time: "2024-01-01T00:00:00Z".to_string(),
+            version: "PostgreSQL 15.0".to_string(),
+            tls_version: None,
+            tls_cipher: None,
+        };
+
+        let json = serde_json::to_string(&pulse).unwrap();
+        assert!(json.contains("\"runtime_ms\":-1"));
+    }
+
+    #[test]
+    fn test_pulse_empty_strings() {
+        let pulse = Pulse {
+            runtime_ms: 50,
+            time: String::new(),
+            version: String::new(),
+            tls_version: Some(String::new()),
+            tls_cipher: Some(String::new()),
+        };
+
+        let json = serde_json::to_string(&pulse).unwrap();
+        assert!(json.contains("\"time\":\"\""));
+        assert!(json.contains("\"version\":\"\""));
+        assert!(json.contains("\"tls_version\":\"\""));
+        assert!(json.contains("\"tls_cipher\":\"\""));
+    }
+
+    #[tokio::test]
+    async fn test_metrics_handler_success() {
+        // Initialize metrics by accessing them
+        let _ = &*PULSE;
+        let _ = &*RUNTIME;
+
+        let response = metrics_handler().await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Verify metrics content
+        assert!(body_str.contains("dbpulse_pulse"));
+        assert!(body_str.contains("dbpulse_runtime"));
+    }
+
+    #[test]
+    fn test_is_tls_error_mixed_case() {
+        // "SSL error" contains both "SSL" and "ssl"
+        let error = anyhow!("Connection failed: SSL error in ssl handshake");
+        assert!(is_tls_error(&error));
+
+        // "TLS" uppercase is detected
+        let error = anyhow!("Connection failed: TLS connection refused");
+        assert!(is_tls_error(&error));
+
+        // "Certificate" with capital C is detected
+        let error = anyhow!("Invalid Certificate chain");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_tls_error_multiple_keywords() {
+        let error = anyhow!("SSL/TLS certificate verification failed");
+        assert!(is_tls_error(&error));
+
+        let error = anyhow!("TLS handshake failed: invalid certificate");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_tls_error_embedded_keywords() {
+        let error = anyhow!("Error in sslconnect: handshake failed");
+        assert!(is_tls_error(&error));
+
+        let error = anyhow!("certificate_verify_failed in TLS setup");
+        assert!(is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_pulse_large_runtime() {
+        let pulse = Pulse {
+            runtime_ms: i64::MAX,
+            time: "2024-01-01T00:00:00Z".to_string(),
+            version: "PostgreSQL 15.0".to_string(),
+            tls_version: None,
+            tls_cipher: None,
+        };
+
+        let json = serde_json::to_string(&pulse).unwrap();
+        assert!(json.contains(&format!("\"runtime_ms\":{}", i64::MAX)));
+    }
+
+    #[test]
+    fn test_pulse_special_characters_in_version() {
+        let pulse = Pulse {
+            runtime_ms: 50,
+            time: "2024-01-01T00:00:00Z".to_string(),
+            version: "PostgreSQL 15.0 \"special\" <tags> & symbols".to_string(),
+            tls_version: None,
+            tls_cipher: None,
+        };
+
+        let json = serde_json::to_string(&pulse).unwrap();
+        // Verify JSON escaping works
+        let parsed: Pulse = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed.version,
+            "PostgreSQL 15.0 \"special\" <tags> & symbols"
+        );
+    }
+
+    #[test]
+    fn test_pulse_unicode_in_fields() {
+        let pulse = Pulse {
+            runtime_ms: 50,
+            time: "2024-01-01T00:00:00Z".to_string(),
+            version: "PostgreSQL 15.0 🚀 数据库".to_string(),
+            tls_version: Some("TLSv1.3 ✓".to_string()),
+            tls_cipher: Some("AES256 🔒".to_string()),
+        };
+
+        let json = serde_json::to_string(&pulse).unwrap();
+        let parsed: Pulse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.version, "PostgreSQL 15.0 🚀 数据库");
+        assert_eq!(parsed.tls_version, Some("TLSv1.3 ✓".to_string()));
+        assert_eq!(parsed.tls_cipher, Some("AES256 🔒".to_string()));
+    }
+
+    #[test]
+    fn test_pulse_debug_trait() {
+        let pulse = Pulse::default();
+        let debug_str = format!("{pulse:?}");
+        assert!(debug_str.contains("Pulse"));
+        assert!(debug_str.contains("runtime_ms"));
+    }
 }
