@@ -181,6 +181,43 @@ pub static DB_READONLY: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     .expect("metric can be created")
 });
 
+// Replication and Performance Metrics
+pub static REPLICATION_LAG: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register_histogram_vec_with_registry!(
+        HistogramOpts::new(
+            "dbpulse_replication_lag_seconds",
+            "Replication lag in seconds (for replicas)"
+        ),
+        &["database"],
+        &REGISTRY
+    )
+    .expect("metric can be created")
+});
+
+pub static BLOCKING_QUERIES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    register_int_gauge_vec_with_registry!(
+        opts!(
+            "dbpulse_blocking_queries",
+            "Number of queries currently blocking others"
+        ),
+        &["database"],
+        &REGISTRY
+    )
+    .expect("metric can be created")
+});
+
+pub static DATABASE_SIZE_BYTES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    register_int_gauge_vec_with_registry!(
+        opts!(
+            "dbpulse_database_size_bytes",
+            "Total database size in bytes"
+        ),
+        &["database"],
+        &REGISTRY
+    )
+    .expect("metric can be created")
+});
+
 /// Encode and return metrics for HTTP export
 ///
 /// # Errors

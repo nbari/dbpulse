@@ -12,8 +12,9 @@ use uuid::Uuid;
 
 use super::HealthCheckResult;
 use crate::metrics::{
-    CONNECTION_DURATION, CONNECTIONS_ACTIVE, OPERATION_DURATION, ROWS_AFFECTED, TABLE_ROWS,
-    TABLE_SIZE_BYTES, TLS_HANDSHAKE_DURATION,
+    BLOCKING_QUERIES, CONNECTION_DURATION, CONNECTIONS_ACTIVE, DATABASE_SIZE_BYTES,
+    OPERATION_DURATION, REPLICATION_LAG, ROWS_AFFECTED, TABLE_ROWS, TABLE_SIZE_BYTES,
+    TLS_HANDSHAKE_DURATION,
 };
 use crate::tls::{TlsConfig, TlsMetadata, TlsMode};
 
@@ -139,6 +140,17 @@ pub async fn test_rw_with_table(
         }
     };
 
+    // Set query timeouts to prevent hanging on locked tables
+    // MySQL uses milliseconds for max_execution_time
+    sqlx::query("SET SESSION max_execution_time = 5000")
+        .execute(&mut conn)
+        .await
+        .context("Failed to set max_execution_time")?;
+    sqlx::query("SET SESSION innodb_lock_wait_timeout = 2")
+        .execute(&mut conn)
+        .await
+        .context("Failed to set innodb_lock_wait_timeout")?;
+
     // Get database version
     let version: Option<String> = sqlx::query_scalar("SELECT VERSION()")
         .fetch_optional(&mut conn)
@@ -161,7 +173,26 @@ pub async fn test_rw_with_table(
         |val| val != 0,
     );
 
+    // Monitor replication lag if this is a replica (read-only)
     if is_read_only {
+        // Try to get replication lag from SHOW REPLICA STATUS (MySQL/MariaDB)
+        if let Ok(Some(row)) = sqlx::query("SHOW REPLICA STATUS")
+            .fetch_optional(&mut conn)
+            .await
+        {
+            // Seconds_Behind_Source column (replication lag in seconds)
+            // -1 means not connected, only record if connected
+            if let Ok(lag_seconds) = row.try_get::<i64, _>("Seconds_Behind_Source")
+                && lag_seconds >= 0
+            {
+                // Replication lag in seconds won't exceed f64 precision in practice
+                #[allow(clippy::cast_precision_loss)]
+                REPLICATION_LAG
+                    .with_label_values(&["mysql"])
+                    .observe(lag_seconds as f64);
+            }
+        }
+
         let tls_metadata = if tls.mode.is_enabled() {
             extract_tls_metadata(&mut conn).await.ok()
         } else {
@@ -174,6 +205,18 @@ pub async fn test_rw_with_table(
             ),
             tls_metadata,
         });
+    }
+
+    // Monitor blocking queries (information_schema.innodb_lock_waits)
+    if let Ok(Some(blocking_count)) = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM information_schema.processlist WHERE state LIKE '%lock%' OR state LIKE '%Locked%'",
+    )
+    .fetch_optional(&mut conn)
+    .await
+    {
+        BLOCKING_QUERIES
+            .with_label_values(&["mysql"])
+            .set(blocking_count);
     }
 
     // create table with optimized schema
@@ -363,6 +406,18 @@ pub async fn test_rw_with_table(
             .set(table_bytes);
     }
 
+    // Query total database size in bytes
+    if let Ok(Some(db_size)) = sqlx::query_scalar::<_, i64>(
+        "SELECT SUM(data_length + index_length) FROM information_schema.TABLES WHERE table_schema = DATABASE()",
+    )
+    .fetch_optional(&mut conn)
+    .await
+    {
+        DATABASE_SIZE_BYTES
+            .with_label_values(&["mysql"])
+            .set(db_size);
+    }
+
     // Extract TLS metadata if TLS is enabled
     let tls_metadata = if tls.mode.is_enabled() {
         extract_tls_metadata(&mut conn).await.ok()
@@ -370,8 +425,8 @@ pub async fn test_rw_with_table(
         None
     };
 
-    // Record connection lifecycle metrics
-    drop(conn);
+    // Gracefully close connection to avoid "Connection reset by peer" errors in server logs
+    let _ = conn.close().await;
     CONNECTION_DURATION.observe(conn_start.elapsed().as_secs_f64());
     CONNECTIONS_ACTIVE.dec();
 

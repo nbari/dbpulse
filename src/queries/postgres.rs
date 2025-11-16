@@ -12,8 +12,9 @@ use uuid::Uuid;
 
 use super::HealthCheckResult;
 use crate::metrics::{
-    CONNECTION_DURATION, CONNECTIONS_ACTIVE, OPERATION_DURATION, ROWS_AFFECTED, TABLE_ROWS,
-    TABLE_SIZE_BYTES, TLS_HANDSHAKE_DURATION,
+    BLOCKING_QUERIES, CONNECTION_DURATION, CONNECTIONS_ACTIVE, DATABASE_SIZE_BYTES,
+    OPERATION_DURATION, REPLICATION_LAG, ROWS_AFFECTED, TABLE_ROWS, TABLE_SIZE_BYTES,
+    TLS_HANDSHAKE_DURATION,
 };
 use crate::tls::{TlsConfig, TlsMetadata, TlsMode};
 
@@ -139,6 +140,16 @@ pub async fn test_rw_with_table(
         }
     };
 
+    // Set query timeouts to prevent hanging on locked tables
+    sqlx::query("SET statement_timeout = '5s'")
+        .execute(&mut conn)
+        .await
+        .context("Failed to set statement timeout")?;
+    sqlx::query("SET lock_timeout = '2s'")
+        .execute(&mut conn)
+        .await
+        .context("Failed to set lock timeout")?;
+
     // Get database version
     let version: Option<String> = sqlx::query_scalar("SHOW server_version")
         .fetch_optional(&mut conn)
@@ -150,8 +161,25 @@ pub async fn test_rw_with_table(
         .fetch_one(&mut conn)
         .await?;
 
-    // can't write to a read-only database
+    // Also check transaction read-only status
+    let tx_read_only: (String,) = sqlx::query_as("SHOW transaction_read_only;")
+        .fetch_one(&mut conn)
+        .await?;
+
+    // Monitor replication lag if this is a replica
     if is_in_recovery.0 {
+        // Try to get replication lag (in seconds, won't exceed f64 precision)
+        if let Ok(Some(lag_seconds)) = sqlx::query_scalar::<_, f64>(
+            "SELECT EXTRACT(EPOCH FROM (NOW() - pg_last_xact_replay_timestamp()))",
+        )
+        .fetch_optional(&mut conn)
+        .await
+        {
+            REPLICATION_LAG
+                .with_label_values(&["postgres"])
+                .observe(lag_seconds);
+        }
+
         let tls_metadata = if tls.mode.is_enabled() {
             extract_tls_metadata(&mut conn).await.ok()
         } else {
@@ -164,6 +192,34 @@ pub async fn test_rw_with_table(
             ),
             tls_metadata,
         });
+    }
+
+    // Check if transaction is read-only (even if not in recovery)
+    if tx_read_only.0.to_lowercase() == "on" {
+        let tls_metadata = if tls.mode.is_enabled() {
+            extract_tls_metadata(&mut conn).await.ok()
+        } else {
+            None
+        };
+        return Ok(HealthCheckResult {
+            version: format!(
+                "{} - Transaction read-only mode enabled",
+                version.unwrap_or_default()
+            ),
+            tls_metadata,
+        });
+    }
+
+    // Monitor blocking queries
+    if let Ok(Some(blocking_count)) = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND state = 'active'",
+    )
+    .fetch_optional(&mut conn)
+    .await
+    {
+        BLOCKING_QUERIES
+            .with_label_values(&["postgres"])
+            .set(blocking_count);
     }
 
     // for UUID - ignore duplicate key error if extension already exists (race condition)
@@ -385,6 +441,17 @@ pub async fn test_rw_with_table(
             .set(table_bytes);
     }
 
+    // Query total database size in bytes
+    if let Ok(Some(db_size)) =
+        sqlx::query_scalar::<_, i64>("SELECT pg_database_size(current_database())")
+            .fetch_optional(&mut conn)
+            .await
+    {
+        DATABASE_SIZE_BYTES
+            .with_label_values(&["postgres"])
+            .set(db_size);
+    }
+
     // Extract TLS metadata if TLS is enabled
     let tls_metadata = if tls.mode.is_enabled() {
         extract_tls_metadata(&mut conn).await.ok()
@@ -392,8 +459,8 @@ pub async fn test_rw_with_table(
         None
     };
 
-    // Record connection lifecycle metrics
-    drop(conn);
+    // Gracefully close connection to avoid "Connection reset by peer" errors in server logs
+    let _ = conn.close().await;
     CONNECTION_DURATION.observe(conn_start.elapsed().as_secs_f64());
     CONNECTIONS_ACTIVE.dec();
 
