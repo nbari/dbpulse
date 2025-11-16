@@ -1,4 +1,4 @@
-## 0.6.4 (2025-11-16)
+## 0.7.0 (2025-11-16)
 
 ### Fixed
 * **MariaDB Compatibility**: Fixed query timeout configuration to support both MySQL and MariaDB
