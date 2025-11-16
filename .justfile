@@ -1,4 +1,4 @@
-default:
+default: test
   @just --list
 
 # Run all tests (unit, integration, TLS)
@@ -213,22 +213,22 @@ test-integration:
   #!/usr/bin/env bash
   set -e
   echo "🧪 Running integration tests..."
-  
+
   # Clean up any existing containers first
   podman rm -f dbpulse-postgres dbpulse-mariadb dbpulse-postgres-tls dbpulse-mariadb-tls 2>/dev/null || true
-  
+
   # Start databases
   podman run -d --name dbpulse-postgres \
     -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=testdb \
     -p 5432:5432 postgres:latest
-  
+
   podman run -d --name dbpulse-mariadb \
     -e MARIADB_USER=dbpulse -e MARIADB_PASSWORD=secret \
     -e MARIADB_ROOT_PASSWORD=secret -e MARIADB_DATABASE=testdb \
     -p 3306:3306 mariadb:latest
-  
+
   echo "⏳ Waiting for databases to be ready..."
-  
+
   # Wait for PostgreSQL
   for i in {1..30}; do
     if podman exec dbpulse-postgres pg_isready -U postgres > /dev/null 2>&1; then
@@ -237,7 +237,7 @@ test-integration:
     fi
     sleep 1
   done
-  
+
   # Wait for MariaDB
   for i in {1..30}; do
     if podman exec dbpulse-mariadb mariadb -u dbpulse -psecret -D testdb -e "SELECT 1" > /dev/null 2>&1; then
@@ -246,20 +246,20 @@ test-integration:
     fi
     sleep 1
   done
-  
+
   # Run tests
   if ! cargo test --test postgres_test -- --ignored --nocapture; then
     echo "❌ PostgreSQL integration tests failed"
     podman rm -f dbpulse-postgres dbpulse-mariadb > /dev/null 2>&1
     exit 1
   fi
-  
+
   if ! cargo test --test mariadb_test -- --ignored --nocapture; then
     echo "❌ MariaDB integration tests failed"
     podman rm -f dbpulse-postgres dbpulse-mariadb > /dev/null 2>&1
     exit 1
   fi
-  
+
   # Cleanup
   podman rm -f dbpulse-postgres dbpulse-mariadb > /dev/null 2>&1
   echo "✅ Integration tests complete!"
@@ -270,15 +270,15 @@ test-integration:
 test-tls:
   #!/usr/bin/env bash
   set -e
-  
+
   echo "🔐 Setting up TLS testing environment..."
-  
+
   # Clean up any existing containers first
   podman rm -f dbpulse-postgres dbpulse-mariadb dbpulse-postgres-tls dbpulse-mariadb-tls 2>/dev/null || true
-  
+
   ./scripts/gen-certs.sh > /dev/null 2>&1
   chmod 644 .certs/mariadb/server.key
-  
+
   # Build PostgreSQL image with proper key permissions
   cat > Dockerfile.postgres-tls <<'EOF'
   FROM postgres:17-alpine
@@ -289,10 +289,10 @@ test-tls:
       chmod 600 /var/lib/postgresql/server.key && \
       chmod 644 /var/lib/postgresql/server.crt /var/lib/postgresql/ca.crt
   EOF
-  
+
   echo "🚀 Starting TLS-enabled databases..."
   podman build -t postgres-tls:test -f Dockerfile.postgres-tls . > /dev/null 2>&1
-  
+
   podman run -d --name dbpulse-postgres-tls \
     -e POSTGRES_USER=postgres \
     -e POSTGRES_PASSWORD=secret \
@@ -304,7 +304,7 @@ test-tls:
     -c ssl_key_file=/var/lib/postgresql/server.key \
     -c ssl_ca_file=/var/lib/postgresql/ca.crt \
     -c ssl_min_protocol_version=TLSv1.2
-  
+
   podman run -d --name dbpulse-mariadb-tls \
     -e MARIADB_USER=dbpulse \
     -e MARIADB_PASSWORD=secret \
@@ -320,9 +320,9 @@ test-tls:
     --ssl-ca=/etc/mysql/ssl/ca.crt \
     --require-secure-transport=OFF \
     --tls-version=TLSv1.2,TLSv1.3
-  
+
   echo "⏳ Waiting for databases to be ready..."
-  
+
   # Wait for PostgreSQL
   for i in {1..30}; do
     if podman exec dbpulse-postgres-tls pg_isready -U postgres > /dev/null 2>&1; then
@@ -337,7 +337,7 @@ test-tls:
     fi
     sleep 1
   done
-  
+
   # Wait for MariaDB
   for i in {1..30}; do
     if podman exec dbpulse-mariadb-tls mariadb -u dbpulse -psecret -D testdb -e "SELECT 1" > /dev/null 2>&1; then
@@ -352,7 +352,7 @@ test-tls:
     fi
     sleep 1
   done
-  
+
   echo "🧪 Running TLS integration tests..."
   if ! cargo test --test postgres_tls_test -- --ignored --nocapture; then
     echo "❌ PostgreSQL TLS tests failed"
@@ -360,14 +360,14 @@ test-tls:
     rm -f Dockerfile.postgres-tls
     exit 1
   fi
-  
+
   if ! cargo test --test mariadb_tls_test -- --ignored --nocapture; then
     echo "❌ MariaDB TLS tests failed"
     podman rm -f dbpulse-postgres-tls dbpulse-mariadb-tls > /dev/null 2>&1
     rm -f Dockerfile.postgres-tls
     exit 1
   fi
-  
+
   echo "🧹 Cleaning up..."
   podman rm -f dbpulse-postgres-tls dbpulse-mariadb-tls > /dev/null 2>&1
   rm -f Dockerfile.postgres-tls

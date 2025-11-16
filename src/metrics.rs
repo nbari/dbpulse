@@ -299,8 +299,11 @@ mod tests {
         // Force initialization of metrics by accessing them
         let _ = &*PULSE;
         let _ = &*RUNTIME;
-        let _ = &*DB_ERRORS;
-        let _ = &*OPERATION_DURATION;
+        // Use metrics with labels to ensure they're registered
+        DB_ERRORS.with_label_values(&["test", "test"]).inc();
+        OPERATION_DURATION
+            .with_label_values(&["test", "test"])
+            .observe(0.1);
 
         // Test that registry can gather metrics
         let metrics = REGISTRY.gather();
