@@ -1,4 +1,4 @@
-## 0.6.3 (2025-11-15)
+## 0.6.3 (2025-11-16)
 
 ### Changed
 * **TLS Configuration via DSN Query Parameters** - Simplified TLS setup
@@ -21,9 +21,19 @@
 * **Grafana Dashboard Updates**
   - Updated to Grafana 11.x (schema version 39)
   - Added `__inputs` and `__requires` sections for grafana.com compatibility
-  - Fixed typo: `dbpuse_pulse` → `dbpulse_pulse`
+  - Fixed typo: `dbpuse_pulse` → `dbpulse_pulse` in metrics and tests
   - Removed version number from dashboard title
   - Updated all panel plugin versions to 11.0.0
+  - Improved Overview section with stat panels for better visibility:
+    - Health Status: Changed from gauge to stat panel with background color mode
+    - Database Mode: Changed from gauge to stat panel with background color mode
+    - Time Since Last Success: Changed from gauge to stat panel with background color mode
+  - Reorganized dashboard layout for better workflow:
+    - Overview (y: 0-6): Health status, success rate, database mode, uptime metrics
+    - Performance (y: 6-15): Latency percentiles, operation duration breakdown
+    - Connection & Data Operations (y: 15-32): Connection metrics, rows affected, table size
+    - TLS/SSL Monitoring (y: 32-47): TLS handshake duration, connection errors, cipher info
+    - Errors & Reliability (y: 47-64): Error rates, iterations, panics, error distribution (moved to bottom)
   - Ready for import at grafana.com
 
 ### Documentation
