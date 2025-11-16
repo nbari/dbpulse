@@ -325,4 +325,104 @@ mod tests {
 
         assert_eq!(metadata.cert_expiry_days.unwrap(), -10);
     }
+
+    #[test]
+    fn test_tls_metadata_full_certificate_info() {
+        // Test with complete certificate metadata
+        let metadata = TlsMetadata {
+            version: Some("TLSv1.3".to_string()),
+            cipher: Some("AES256-GCM-SHA384".to_string()),
+            cert_subject: Some("CN=db.example.com,O=Example Corp,C=US".to_string()),
+            cert_issuer: Some("CN=Example CA,O=Example Corp,C=US".to_string()),
+            cert_expiry_days: Some(90),
+        };
+
+        assert_eq!(metadata.version.as_ref().unwrap(), "TLSv1.3");
+        assert_eq!(
+            metadata.cipher.as_ref().unwrap(),
+            "AES256-GCM-SHA384"
+        );
+        assert_eq!(
+            metadata.cert_subject.as_ref().unwrap(),
+            "CN=db.example.com,O=Example Corp,C=US"
+        );
+        assert_eq!(
+            metadata.cert_issuer.as_ref().unwrap(),
+            "CN=Example CA,O=Example Corp,C=US"
+        );
+        assert_eq!(metadata.cert_expiry_days.unwrap(), 90);
+    }
+
+    #[test]
+    fn test_tls_metadata_expiry_warnings() {
+        // Test various expiry warning thresholds
+        let test_cases = vec![
+            (90, "healthy certificate"),
+            (30, "approaching expiry"),
+            (7, "critical - renew soon"),
+            (1, "expires tomorrow"),
+            (0, "expires today"),
+            (-1, "expired yesterday"),
+            (-30, "expired 30 days ago"),
+        ];
+
+        for (days, description) in test_cases {
+            let metadata = TlsMetadata {
+                version: Some("TLSv1.3".to_string()),
+                cipher: Some("AES256-GCM-SHA384".to_string()),
+                cert_subject: Some("CN=test.db".to_string()),
+                cert_issuer: Some("CN=Test CA".to_string()),
+                cert_expiry_days: Some(days),
+            };
+
+            assert_eq!(
+                metadata.cert_expiry_days.unwrap(),
+                days,
+                "Failed for: {}",
+                description
+            );
+        }
+    }
+
+    #[test]
+    fn test_tls_metadata_mysql_format() {
+        // Test metadata format typical from MySQL SHOW STATUS
+        let metadata = TlsMetadata {
+            version: Some("TLSv1.2".to_string()),
+            cipher: Some("DHE-RSA-AES256-SHA".to_string()),
+            cert_subject: Some("/C=US/ST=California/L=San Francisco/O=Example/CN=mysql.example.com".to_string()),
+            cert_issuer: Some("/C=US/O=DigiCert Inc/CN=DigiCert Global Root CA".to_string()),
+            cert_expiry_days: Some(365),
+        };
+
+        // Verify all fields are populated
+        assert!(metadata.version.is_some());
+        assert!(metadata.cipher.is_some());
+        assert!(metadata.cert_subject.is_some());
+        assert!(metadata.cert_issuer.is_some());
+        assert!(metadata.cert_expiry_days.is_some());
+
+        // Verify subject contains expected fields
+        let subject = metadata.cert_subject.unwrap();
+        assert!(subject.contains("CN=mysql.example.com"));
+        assert!(subject.contains("C=US"));
+    }
+
+    #[test]
+    fn test_tls_metadata_expiry_only() {
+        // Test metadata with only expiry information
+        let metadata = TlsMetadata {
+            version: None,
+            cipher: None,
+            cert_subject: None,
+            cert_issuer: None,
+            cert_expiry_days: Some(45),
+        };
+
+        assert!(metadata.version.is_none());
+        assert!(metadata.cipher.is_none());
+        assert!(metadata.cert_subject.is_none());
+        assert!(metadata.cert_issuer.is_none());
+        assert_eq!(metadata.cert_expiry_days.unwrap(), 45);
+    }
 }

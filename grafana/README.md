@@ -356,6 +356,35 @@ dbpulse_tls_info
 sum by (version) (dbpulse_tls_info)
 ```
 
+#### `dbpulse_tls_cert_expiry_days` (Gauge)
+**Labels:** `database` (postgres/mysql)
+
+**Description:** Days until TLS certificate expiration (negative if expired). Only available for MySQL/MariaDB with TLS enabled.
+
+**Use Case:** Proactive certificate lifecycle management and expiration alerting
+
+**Query Examples:**
+```promql
+# Current certificate expiry status
+dbpulse_tls_cert_expiry_days
+
+# Certificates expiring within 30 days
+dbpulse_tls_cert_expiry_days < 30
+
+# Certificates already expired
+dbpulse_tls_cert_expiry_days < 0
+
+# Days until next certificate renewal needed
+min(dbpulse_tls_cert_expiry_days)
+```
+
+**Alert Thresholds:**
+- **Critical (<7 days):** Renew immediately to prevent outage
+- **Warning (<30 days):** Plan certificate renewal
+- **Expired (<0 days):** Certificate has expired, connections may fail
+
+**Note:** PostgreSQL's `pg_stat_ssl` doesn't expose certificate metadata. For PostgreSQL, monitor certificate files externally.
+
 ---
 
 ## Alert Rules
@@ -473,6 +502,42 @@ sum by (version) (dbpulse_tls_info)
   annotations:
     summary: "TLS connection errors detected"
     description: "{{ $labels.database }} TLS errors: {{ $value | humanize }}/s"
+```
+
+#### TLS Certificate Expiring Soon (Critical)
+```yaml
+- alert: TLSCertificateExpiringSoon
+  expr: dbpulse_tls_cert_expiry_days < 7
+  for: 1h
+  labels:
+    severity: critical
+  annotations:
+    summary: "TLS certificate expires in less than 7 days"
+    description: "{{ $labels.database }} certificate expires in {{ $value }} days - RENEW IMMEDIATELY"
+```
+
+#### TLS Certificate Expiring (Warning)
+```yaml
+- alert: TLSCertificateExpiringWarning
+  expr: dbpulse_tls_cert_expiry_days < 30
+  for: 1h
+  labels:
+    severity: warning
+  annotations:
+    summary: "TLS certificate expires in less than 30 days"
+    description: "{{ $labels.database }} certificate expires in {{ $value }} days - plan renewal"
+```
+
+#### TLS Certificate Expired
+```yaml
+- alert: TLSCertificateExpired
+  expr: dbpulse_tls_cert_expiry_days < 0
+  for: 5m
+  labels:
+    severity: critical
+  annotations:
+    summary: "TLS certificate has EXPIRED"
+    description: "{{ $labels.database }} certificate expired {{ $value | humanize }} days ago"
 ```
 
 #### Monitoring Loop Panics

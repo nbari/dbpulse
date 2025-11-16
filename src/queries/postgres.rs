@@ -502,6 +502,9 @@ pub async fn test_rw_with_table(
 /// Extract TLS metadata from `PostgreSQL` connection
 async fn extract_tls_metadata(conn: &mut sqlx::PgConnection) -> Result<TlsMetadata> {
     // Query pg_stat_ssl for TLS information
+    // Note: PostgreSQL's pg_stat_ssl doesn't expose certificate expiry information
+    // Certificate metadata (subject, issuer, expiry) would require server-side access
+    // or PostgreSQL extensions. For production use, monitor server certificates externally.
     let row = sqlx::query("SELECT version, cipher FROM pg_stat_ssl WHERE pid = pg_backend_pid()")
         .fetch_optional(conn)
         .await?;
@@ -515,7 +518,9 @@ async fn extract_tls_metadata(conn: &mut sqlx::PgConnection) -> Result<TlsMetada
             Ok(TlsMetadata {
                 version,
                 cipher,
-                ..Default::default()
+                cert_subject: None,
+                cert_issuer: None,
+                cert_expiry_days: None,
             })
         },
     )

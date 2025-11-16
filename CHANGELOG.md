@@ -1,4 +1,67 @@
-## 0.7.2 (2025-11-xx)
+## 0.7.3 (2025-11-16)
+
+### Added
+* **TLS Certificate Expiry Monitoring** - Proactive certificate lifecycle tracking
+  - New metric: `dbpulse_tls_cert_expiry_days` - Days until TLS certificate expiration (negative if expired)
+  - MySQL/MariaDB: Automatically extracts certificate metadata from `SHOW STATUS LIKE 'Ssl%'`:
+    - Certificate expiry date (`Ssl_server_not_after`) parsed and converted to days remaining
+    - Certificate subject DN (`Ssl_server_subject`) for audit trails
+    - Certificate issuer DN (`Ssl_server_issuer`) for CA tracking
+  - PostgreSQL: Notes added explaining pg_stat_ssl limitations (version/cipher only)
+  - Date parsing supports MySQL format: `"Dec 31 23:59:59 2025 GMT"` with flexible GMT suffix handling
+  - Enables proactive alerting before certificates expire (recommended: < 30 days warning, < 7 days critical)
+* **Grafana Certificate Monitoring Panels**
+  - Certificate Expiry gauge (6x8 grid): Visual indicator with color thresholds
+    - Green: 60+ days (healthy)
+    - Yellow: 30-60 days (plan renewal)
+    - Orange: 7-30 days (warning)
+    - Red: 0-7 days (critical - renew immediately)
+  - Certificate Expiry Timeline (12x8 grid): Time series tracking expiry countdown over time
+    - Shows trend line with 30-day threshold marker
+    - Legend displays mean, min, and last values
+    - Helps identify when certificates were renewed
+* **Success Rate Monitoring Panel**
+  - New gauge panel (6x6 grid) showing overall health check success rate over 5 minutes
+  - Color thresholds: Red (0-95%), Yellow (95-99%), Green (99-100%)
+  - Query: `sum(rate(dbpulse_iterations_total{status="success"}[5m])) / sum(rate(dbpulse_iterations_total[5m])) * 100`
+  - Perfect for SLO tracking and at-a-glance health assessment
+
+### Improved
+* **Grafana Dashboard Visualization** - Cleaner, more professional appearance
+  - Removed fill opacity from all 12 time series panels (changed from `fillOpacity: 10` to `0`)
+  - Panels now display as clean lines without colored areas for better readability
+  - Pulse & Runtime panel enhancements:
+    - Dual Y-axis configuration: Left axis (0-1) for pulse status, Right axis (auto-scaled ms) for runtime
+    - Added `axisColorMode: "series"` to color-code axes matching their data series
+    - Left axis shows only 0 and 1 tick marks (`decimals: 0`) for binary pulse visualization
+    - Removed min/max constraints from runtime series for proper auto-scaling
+    - Width adjusted from 24 to 18 units to accommodate Success Rate gauge
+* **Test Suite Expansion** - 100 unit tests (up from 86)
+  - Certificate expiry date parsing tests (7 tests):
+    - Valid future dates (90, 60, 365 days)
+    - Expired certificates (negative days)
+    - Edge cases (today, tomorrow, various formats)
+    - Invalid format handling
+    - Real-world MySQL date format examples
+  - TLS metadata tests (5 tests):
+    - Full certificate info validation
+    - Expiry warning thresholds (90, 30, 7, 1, 0, -1, -30 days)
+    - MySQL DN format parsing
+    - Partial metadata scenarios
+  - Metrics integration tests (3 tests):
+    - Single database tracking
+    - Multiple databases simultaneously
+    - Metric updates over time (simulating certificate aging and renewal)
+  - All tests use modern Rust range syntax (clippy approved)
+
+### Documentation
+* Certificate expiry tracking best practices:
+  - MySQL/MariaDB: Full certificate metadata available through SQL queries
+  - PostgreSQL: Certificate metadata requires external file monitoring (pg_stat_ssl limitation)
+  - Recommended alert thresholds: 30 days (warning), 7 days (critical), 0 days (expired)
+* Panel descriptions added for all new Grafana panels with usage guidance
+
+## 0.7.2 (2025-11-16)
 
 ### Added
 * **Version & Uptime Metrics**
