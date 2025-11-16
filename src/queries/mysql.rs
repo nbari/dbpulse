@@ -484,6 +484,9 @@ async fn extract_tls_metadata(conn: &mut sqlx::MySqlConnection) -> Result<TlsMet
 
     let mut tls_version: Option<String> = None;
     let mut tls_cipher: Option<String> = None;
+    let mut cert_subject: Option<String> = None;
+    let mut cert_issuer: Option<String> = None;
+    let mut cert_not_after: Option<String> = None;
 
     for row in rows {
         let variable_name: String = row.try_get(0)?;
@@ -500,13 +503,157 @@ async fn extract_tls_metadata(conn: &mut sqlx::MySqlConnection) -> Result<TlsMet
                     tls_cipher = Some(value);
                 }
             }
+            "Ssl_server_not_after" => {
+                if !value.is_empty() {
+                    cert_not_after = Some(value);
+                }
+            }
+            "Ssl_server_subject" => {
+                if !value.is_empty() {
+                    cert_subject = Some(value);
+                }
+            }
+            "Ssl_server_issuer" => {
+                if !value.is_empty() {
+                    cert_issuer = Some(value);
+                }
+            }
             _ => {}
         }
     }
 
+    // Calculate days until certificate expiration
+    let cert_expiry_days = cert_not_after.and_then(|not_after| {
+        // Parse the date format: "MMM DD HH:MM:SS YYYY GMT"
+        // Example: "Dec 31 23:59:59 2025 GMT"
+        parse_cert_expiry_date(&not_after)
+    });
+
     Ok(TlsMetadata {
         version: tls_version,
         cipher: tls_cipher,
-        ..Default::default()
+        cert_subject,
+        cert_issuer,
+        cert_expiry_days,
     })
+}
+
+/// Parse certificate expiry date and calculate days until expiration
+/// Returns negative days if certificate has expired
+fn parse_cert_expiry_date(date_str: &str) -> Option<i64> {
+    use chrono::{DateTime, Utc};
+
+    // Try to parse the date string (MySQL format: "Dec 31 23:59:59 2025 GMT")
+    // Remove GMT suffix if present
+    let date_str = date_str.trim_end_matches(" GMT").trim();
+
+    // Try parsing with chrono
+    if let Ok(expiry_date) = DateTime::parse_from_str(&format!("{date_str} +0000"), "%b %d %H:%M:%S %Y %z") {
+        let now = Utc::now();
+        let duration = expiry_date.signed_duration_since(now);
+        Some(duration.num_days())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn test_parse_cert_expiry_date_valid() {
+        // Test parsing a valid MySQL certificate date format
+        // Create a date string 90 days in the future
+        let future_date = Utc::now() + Duration::days(90);
+        let date_str = format!("{} GMT", future_date.format("%b %d %H:%M:%S %Y"));
+
+        let days = parse_cert_expiry_date(&date_str);
+        assert!(days.is_some());
+        let days = days.unwrap();
+        // Should be around 90 days (allow for test execution time)
+        assert!((89..=91).contains(&days));
+    }
+
+    #[test]
+    fn test_parse_cert_expiry_date_past() {
+        // Test with an expired certificate (30 days ago)
+        let past_date = Utc::now() - Duration::days(30);
+        let date_str = format!("{} GMT", past_date.format("%b %d %H:%M:%S %Y"));
+
+        let days = parse_cert_expiry_date(&date_str);
+        assert!(days.is_some());
+        let days = days.unwrap();
+        // Should be negative (around -30)
+        assert!((-31..=-29).contains(&days));
+    }
+
+    #[test]
+    fn test_parse_cert_expiry_date_without_gmt() {
+        // Test parsing without GMT suffix
+        let future_date = Utc::now() + Duration::days(60);
+        let date_str = format!("{}", future_date.format("%b %d %H:%M:%S %Y"));
+
+        let days = parse_cert_expiry_date(&date_str);
+        assert!(days.is_some());
+        let days = days.unwrap();
+        assert!((59..=61).contains(&days));
+    }
+
+    #[test]
+    fn test_parse_cert_expiry_date_invalid() {
+        // Test with invalid date format
+        let invalid_dates = vec![
+            "invalid date string",
+            "",
+            "2025-12-31 23:59:59", // Wrong format
+            "December 31 2025",    // Wrong format
+        ];
+
+        for date_str in invalid_dates {
+            let days = parse_cert_expiry_date(date_str);
+            assert!(days.is_none(), "Should fail for: {}", date_str);
+        }
+    }
+
+    #[test]
+    fn test_parse_cert_expiry_date_edge_cases() {
+        // Test with certificate expiring today (very close to 0 days)
+        let today = Utc::now();
+        let date_str = format!("{} GMT", today.format("%b %d %H:%M:%S %Y"));
+
+        let days = parse_cert_expiry_date(&date_str);
+        assert!(days.is_some());
+        let days = days.unwrap();
+        // Should be 0 or very close to 0
+        assert!((-1..=1).contains(&days));
+    }
+
+    #[test]
+    fn test_parse_cert_expiry_date_far_future() {
+        // Test with certificate expiring in 365 days
+        let far_future = Utc::now() + Duration::days(365);
+        let date_str = format!("{} GMT", far_future.format("%b %d %H:%M:%S %Y"));
+
+        let days = parse_cert_expiry_date(&date_str);
+        assert!(days.is_some());
+        let days = days.unwrap();
+        assert!((364..=366).contains(&days));
+    }
+
+    #[test]
+    fn test_parse_cert_expiry_date_examples() {
+        // Test with real-world example formats from MySQL
+        let examples = vec![
+            "Dec 31 23:59:59 2025 GMT",
+            "Jan 01 00:00:00 2026 GMT",
+            "Jun 15 12:30:45 2025 GMT",
+        ];
+
+        for date_str in examples {
+            let days = parse_cert_expiry_date(date_str);
+            assert!(days.is_some(), "Should parse: {}", date_str);
+        }
+    }
 }

@@ -9,8 +9,8 @@ use tokio::{net::TcpListener, sync::mpsc, task, time};
 
 use crate::metrics::{
     DATABASE_UPTIME_SECONDS, DATABASE_VERSION_INFO, DB_ERRORS, DB_READONLY, ITERATIONS_TOTAL,
-    LAST_RUNTIME_MS, LAST_SUCCESS, PANICS_RECOVERED, PULSE, RUNTIME, TLS_CONNECTION_ERRORS,
-    TLS_INFO, encode_metrics,
+    LAST_RUNTIME_MS, LAST_SUCCESS, PANICS_RECOVERED, PULSE, RUNTIME, TLS_CERT_EXPIRY_DAYS,
+    TLS_CONNECTION_ERRORS, TLS_INFO, encode_metrics,
 };
 use crate::queries::{mysql, postgres};
 use crate::tls::TlsConfig;
@@ -195,6 +195,13 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                                         ])
                                         .set(1);
                                 }
+
+                                // Update certificate expiry metric
+                                if let Some(expiry_days) = metadata.cert_expiry_days {
+                                    TLS_CERT_EXPIRY_DAYS
+                                        .with_label_values(&["postgres"])
+                                        .set(expiry_days);
+                                }
                             }
                         }
                         Err(e) => {
@@ -283,6 +290,13 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                                         cipher.as_str(),
                                     ])
                                     .set(1);
+                            }
+
+                            // Update certificate expiry metric
+                            if let Some(expiry_days) = metadata.cert_expiry_days {
+                                TLS_CERT_EXPIRY_DAYS
+                                    .with_label_values(&["mysql"])
+                                    .set(expiry_days);
                             }
                         }
                     }

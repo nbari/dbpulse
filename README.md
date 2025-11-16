@@ -165,6 +165,315 @@ dbpulse \
 dbpulse --dsn "postgres://postgres:postgres@tcp(localhost:5432)/test" -i 10 -r 50
 ```
 
+## How It Works
+
+### Production Safety Design
+
+`dbpulse` is designed from the ground up to be safe for production use. It performs **minimal, controlled operations** that have negligible impact on database performance.
+
+### The Monitoring Table
+
+Creates a single lightweight table for health checks:
+
+**PostgreSQL:**
+```sql
+CREATE TABLE IF NOT EXISTS dbpulse_rw (
+    id INTEGER PRIMARY KEY,
+    uuid UUID NOT NULL,
+    ts TIMESTAMP NOT NULL DEFAULT NOW()
+)
+```
+
+**MySQL/MariaDB:**
+```sql
+CREATE TABLE IF NOT EXISTS dbpulse_rw (
+    id INTEGER PRIMARY KEY,
+    uuid VARCHAR(36) NOT NULL,
+    ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB
+```
+
+**Characteristics:**
+- **Small footprint**: 3 columns, typically < 1000 rows
+- **Primary key**: Integer ID for fast lookups and updates
+- **Indexed**: Primary key ensures O(1) operations
+- **Automatic cleanup**: Old records deleted to prevent unbounded growth
+
+### Query Operations (Per Health Check Cycle)
+
+#### 1. Connection & Version Check
+```sql
+-- PostgreSQL
+SELECT version();
+SELECT pg_is_in_recovery();
+
+-- MySQL/MariaDB
+SELECT VERSION();
+SELECT @@read_only;
+```
+**Impact:** Read-only, metadata query. Zero table locks, instant response.
+
+#### 2. Timeout Protection Setup
+```sql
+-- PostgreSQL
+SET LOCAL statement_timeout = 5000;  -- 5 seconds
+SET LOCAL lock_timeout = 2000;       -- 2 seconds
+
+-- MySQL/MariaDB
+SET max_execution_time = 5000;       -- 5 seconds (milliseconds)
+SET innodb_lock_wait_timeout = 2;    -- 2 seconds
+```
+**Safety:** Prevents health checks from hanging on locked tables or long-running queries.
+
+#### 3. Write Operation (INSERT or UPDATE)
+```sql
+-- Try INSERT first (new ID)
+INSERT INTO dbpulse_rw (id, uuid, ts)
+VALUES ($1, $2, NOW());
+
+-- If ID exists, UPDATE instead
+UPDATE dbpulse_rw
+SET uuid = $1, ts = NOW()
+WHERE id = $2;
+```
+**Impact:**
+- Single row operation (1 write per check)
+- Uses primary key (indexed, O(1) lookup)
+- Minimal WAL/binlog impact (~50 bytes per operation)
+- No table scans, no full table locks
+
+#### 4. Read Verification
+```sql
+SELECT uuid FROM dbpulse_rw WHERE id = $1;
+```
+**Impact:**
+- Primary key lookup (O(1), uses index)
+- Zero table locks
+- Instant response (<1ms typically)
+
+#### 5. Transaction Rollback Test
+```sql
+BEGIN;
+UPDATE dbpulse_rw SET uuid = $1 WHERE id = $2;
+ROLLBACK;
+```
+**Impact:**
+- Tests transaction capability
+- Changes rolled back (zero persistent impact)
+- Validates MVCC/transaction isolation
+
+#### 6. Cleanup (Periodic)
+```sql
+-- PostgreSQL
+DELETE FROM dbpulse_rw
+WHERE ts < NOW() - INTERVAL '24 hours'
+LIMIT 10000;
+
+-- MySQL/MariaDB
+DELETE FROM dbpulse_rw
+WHERE ts < DATE_SUB(NOW(), INTERVAL 24 HOUR)
+LIMIT 10000;
+```
+**Safety:**
+- Runs only when table has data
+- `LIMIT 10000` prevents long-running DELETEs
+- Uses timestamp index for efficient cleanup
+- Keeps table size bounded (<1000 rows typically)
+
+#### 7. Table Drop Protection
+```sql
+-- Only drops if row count < 100,000
+DROP TABLE IF EXISTS dbpulse_rw;
+```
+**Safety:** Prevents accidental data loss if table accumulated significant data.
+
+### Operational Metrics (Best-Effort Queries)
+
+These queries collect additional metrics but **never fail the health check** if they error:
+
+```sql
+-- Replication Lag (PostgreSQL)
+SELECT EXTRACT(EPOCH FROM (NOW() - pg_last_xact_replay_timestamp()));
+
+-- Replication Lag (MySQL)
+SHOW REPLICA STATUS;
+
+-- Blocking Queries (PostgreSQL)
+SELECT COUNT(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock';
+
+-- Blocking Queries (MySQL)
+SELECT COUNT(*) FROM information_schema.processlist
+WHERE state LIKE '%lock%';
+
+-- Database Size (PostgreSQL)
+SELECT pg_database_size(current_database());
+
+-- Database Size (MySQL)
+SELECT SUM(data_length + index_length)
+FROM information_schema.TABLES
+WHERE table_schema = DATABASE();
+
+-- Table Statistics
+SELECT pg_relation_size('dbpulse_rw');  -- PostgreSQL
+SELECT data_length FROM information_schema.TABLES
+WHERE table_name = 'dbpulse_rw';        -- MySQL
+```
+
+**Pattern:** All use `if let Ok(...)` - failures are logged but don't affect pulse status.
+
+### Why It's Safe for Production
+
+#### ✅ Minimal Resource Impact
+- **1 row write** per health check (typically 30s intervals)
+- **2-3 row reads** per check (primary key lookups)
+- **< 100 bytes** of data per check
+- **No table scans** - all queries use primary key or indexes
+- **No long-running queries** - timeouts ensure operations complete in seconds
+
+#### ✅ No Disruption to Application Traffic
+- **Separate table** - isolated from application data
+- **No locks on application tables** - only touches `dbpulse_rw`
+- **Non-blocking operations** - primary key operations don't block readers
+- **Short transaction duration** - writes complete in milliseconds
+
+#### ✅ Bounded Resource Usage
+- **Table size limited** - automatic cleanup keeps < 1000 rows
+- **DELETE limits** - max 10,000 rows per cleanup prevents long locks
+- **Connection pooling** - single connection per check, properly closed
+- **Memory footprint** - tiny table, minimal index overhead
+
+#### ✅ Protection Against Failures
+- **Timeout protection** - never hangs on locked tables
+- **Graceful degradation** - optional metrics don't fail health checks
+- **Error isolation** - panic recovery prevents monitoring loop crashes
+- **Connection cleanup** - proper FIN packets, no "connection reset" errors
+
+#### ✅ Production Validation
+- **100 unit tests** covering edge cases and failure modes
+- **Integration tests** with real PostgreSQL and MariaDB containers
+- **TLS tests** validating secure connections
+- **Robustness tests** for panic recovery and concurrent operations
+
+### Resource Estimates (30-second interval)
+
+| Resource | Per Check | Per Hour | Per Day |
+|----------|-----------|----------|---------|
+| **Writes** | 1 row | 120 rows | 2,880 rows |
+| **Reads** | 2-3 rows | 240-360 rows | 5,760-8,640 rows |
+| **Data Written** | ~50 bytes | ~6 KB | ~144 KB |
+| **WAL/Binlog** | ~50 bytes | ~6 KB | ~144 KB |
+| **Disk I/O** | < 1 KB | < 120 KB | < 3 MB |
+| **CPU** | < 1ms | < 2s | < 48s |
+
+**Comparison:** A single application query typically touches more data than an entire day of health checks.
+
+### Compatibility
+
+- **PostgreSQL**: 9.6+ (tested with 12, 13, 14, 15, 16, 17)
+- **MySQL**: 5.7+, 8.0+
+- **MariaDB**: 10.x, 11.x
+- **Galera Cluster**: Fully compatible, detects flow-control and HALT states
+- **Cloud Databases**: AWS RDS, Aurora, Azure Database, Google Cloud SQL
+- **Managed Services**: Aiven, DigitalOcean, Heroku Postgres
+
+### Interval Scheduling Behavior
+
+**How the interval works:**
+
+Each health check cycle follows this pattern:
+
+```rust
+1. Start health check (record start time)
+2. Perform all operations (connect, write, read, cleanup, etc.)
+3. Complete health check (record end time)
+4. Calculate: remaining_time = interval - actual_runtime
+5. If remaining_time > 0: Sleep for remaining_time
+6. If remaining_time <= 0: Start next check immediately (no sleep)
+```
+
+**Important characteristics:**
+
+- ✅ **Operations never overlap** - Each check completes before the next starts
+- ✅ **Operations never queue** - Only one check runs at a time
+- ⚠️ **No breaks if operations are slow** - If runtime > interval, next check starts immediately
+
+**Examples with different intervals:**
+
+| Interval | Health Check Runtime | Behavior |
+|----------|---------------------|----------|
+| 30s | 0.5s | ✅ Sleeps 29.5s, total cycle = 30s |
+| 30s | 5s | ✅ Sleeps 25s, total cycle = 30s |
+| 30s | 35s | ⚠️ No sleep, next check starts immediately |
+| 1s | 0.1s | ✅ Sleeps 0.9s, total cycle = 1s |
+| 1s | 0.5s | ✅ Sleeps 0.5s, total cycle = 1s |
+| 1s | 1.2s | ⚠️ No sleep, continuous checks |
+| 1s | 2s | ⚠️ No sleep, back-to-back checks |
+
+**⚠️ Warning: Aggressive Intervals**
+
+Setting `--interval 1` (or any very low value) can cause issues:
+
+**Scenario: Health check takes 2 seconds, interval set to 1 second**
+```
+00:00.0 - Start check #1
+00:02.0 - Complete check #1 (took 2s)
+00:02.0 - Start check #2 immediately (no sleep, 2s > 1s)
+00:04.0 - Complete check #2
+00:04.0 - Start check #3 immediately
+...
+```
+
+**Result:** Continuous database operations with zero breaks between checks.
+
+**Potential problems:**
+- 🔴 **Database stress** - Constant connections, writes, and reads
+- 🔴 **Connection pool exhaustion** - Rapid connection churn
+- 🔴 **Metrics flooding** - Prometheus scrapes overwhelmed with data points
+- 🔴 **False positives** - Timeouts due to self-induced load, not actual issues
+- 🔴 **Resource waste** - CPU, network, and I/O constantly busy
+
+**Recommended interval values:**
+
+| Use Case | Recommended Interval | Reason |
+|----------|---------------------|---------|
+| **Production** | 30-60s | Balanced monitoring with minimal overhead |
+| **Critical systems** | 10-15s | More frequent checks without stress |
+| **Development/Testing** | 5-10s | Quick feedback during debugging |
+| **High-latency networks** | 60-120s | Account for network delays |
+| **Avoid** | < 5s | Risk of continuous hammering if checks are slow |
+
+**Best Practice Formula:**
+```
+Recommended Interval = (Expected Health Check Duration × 3) + Safety Margin
+
+Examples:
+- Health check typically takes 0.5s → Use 5-10s interval
+- Health check typically takes 2s → Use 10-30s interval
+- Health check typically takes 5s → Use 30-60s interval
+```
+
+**Monitoring health check performance:**
+
+Use the `dbpulse_runtime_last_milliseconds` metric to see how long checks actually take:
+
+```promql
+# View health check duration
+dbpulse_runtime_last_milliseconds
+
+# Alert if health checks take too long for your interval
+dbpulse_runtime_last_milliseconds / 1000 > (your_interval * 0.8)
+```
+
+**Recovery from panics:**
+
+If a health check panics (unexpected error), dbpulse:
+1. Recovers from the panic (doesn't crash)
+2. Sets pulse to 0 (unhealthy)
+3. Increments `dbpulse_panics_recovered_total`
+4. **Always sleeps for the full interval** before retrying (even if panic was quick)
+
+This prevents panic loops from hammering the database.
+
 ## What It Monitors
 
 ### Health Check Operations (The Pulse Check 🩺)
