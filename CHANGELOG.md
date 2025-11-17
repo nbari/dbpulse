@@ -1,3 +1,85 @@
+## 0.8.0 (2025-11-17)
+
+**MAJOR RELEASE** - TLS architecture refactoring and enhanced observability
+
+### Breaking Changes
+* **TLS Dependency Migration**: Migrated from OpenSSL to Rustls
+  - OpenSSL is no longer used or required as a build dependency
+  - Rustls provides better async support and smaller binary size
+  - TLS functionality remains 100% compatible (no configuration changes needed)
+  - If building from source, OpenSSL development libraries are no longer required
+  - Container images are now smaller and have fewer dependencies
+
+### Added
+* **TLS Module Refactoring** - Better code organization and maintainability
+  - Refactored monolithic `src/tls.rs` (763 lines) into clean module structure:
+    - `src/tls/mod.rs` - Module interface and public API
+    - `src/tls/config.rs` - TLS configuration and DSN parameter parsing
+    - `src/tls/metadata.rs` - Certificate metadata structures
+    - `src/tls/probe.rs` - Certificate probing and extraction (505 lines)
+    - `src/tls/verifier.rs` - Custom certificate verification (227 lines)
+    - `src/tls/cache.rs` - Connection caching and reuse (130 lines)
+  - Better separation of concerns for easier maintenance and testing
+  - Improved code readability with focused modules
+* **Enhanced TLS Error Observability**
+  - New metric: `dbpulse_tls_cert_probe_errors_total` - Certificate probe errors by type
+  - Error categorization: connection, handshake, parse, timeout
+  - Better debugging capabilities for TLS certificate issues
+  - Enables targeted alerting for specific TLS failure modes
+* **Expanded Test Coverage** - 103 total tests (up from 92)
+  - Added 11 new unit tests for TLS certificate probing:
+    - Server name resolution tests (hostname, IPv4, IPv6)
+    - MySQL handshake parsing tests
+    - Certificate extraction edge cases
+    - Error handling validation
+  - All tests passing with zero warnings
+* **Additional Metrics Restored from v0.7.3**
+  - `dbpulse_database_version_info`: Database server version info (value is always 1)
+  - `dbpulse_database_uptime_seconds`: How long the database has been up
+  - `dbpulse_runtime_last_milliseconds`: Runtime of the most recent health check iteration
+  - These metrics were temporarily missing in the sandbox branch but are now fully restored
+
+### Improved
+* **Code Quality** - Following Rust best practices
+  - Cleaned and organized all imports following Rust style guide
+  - Grouped imports by category: std, external crates, internal modules
+  - Consistent import organization across all 9 source files
+  - Zero clippy warnings with strict lints (pedantic + nursery)
+* **TLS Implementation**
+  - More idiomatic Rust code with better error handling
+  - Reduced use of "dangerous" APIs for better security
+  - Better async/await integration with tokio runtime
+  - Improved certificate verification with proper root store handling
+* **Documentation**
+  - Added "How It Works" section to README explaining TLS certificate extraction
+  - Describes the two-phase approach: real connection + certificate probe
+  - Clear explanation of why direct certificate extraction from SQLx is complex
+  - Better understanding for users and contributors
+* **Dependencies**
+  - Updated `webpki-roots` from 0.26 to 1.0 (latest stable version)
+  - Better WebPKI root certificate handling
+  - Improved compatibility and security
+
+### Technical Details
+* **Rust Edition**: Uses Rust 2024 edition for latest language features
+  - Requires Rust 1.82+ for edition 2024 support
+  - Utilizes let chains and other modern Rust features
+* **Build System**: Optimized for faster compilation
+  - Rustls has fewer dependencies than OpenSSL
+  - Smaller binary size (TLS implementation is pure Rust)
+  - Easier to cross-compile for different platforms
+
+### Migration Guide
+* **No Configuration Changes Required**
+  - DSN format remains the same
+  - CLI flags unchanged
+  - Metrics names unchanged
+  - Docker/Kubernetes deployments work as-is
+* **Building from Source**
+  - No longer need OpenSSL development libraries
+  - Standard `cargo build` works on all platforms
+  - Easier to set up development environment
+
 ## 0.7.3 (2025-11-16)
 
 ### Added

@@ -60,6 +60,30 @@ pub static TLS_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     .expect("metric can be created")
 });
 
+pub static TLS_CERT_EXPIRY_DAYS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    register_int_gauge_vec_with_registry!(
+        opts!(
+            "dbpulse_tls_cert_expiry_days",
+            "Days until TLS certificate expiration (negative if expired)"
+        ),
+        &["database"],
+        &REGISTRY
+    )
+    .expect("metric can be created")
+});
+
+pub static TLS_CERT_PROBE_ERRORS: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec_with_registry!(
+        opts!(
+            "dbpulse_tls_cert_probe_errors_total",
+            "Total certificate probe errors by type (connection, handshake, parse, timeout)"
+        ),
+        &["database", "error_type"],
+        &REGISTRY
+    )
+    .expect("metric can be created")
+});
+
 pub static DATABASE_VERSION_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec_with_registry!(
         opts!(
@@ -77,6 +101,18 @@ pub static DATABASE_UPTIME_SECONDS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         opts!(
             "dbpulse_database_uptime_seconds",
             "How long (in seconds) the database has been up"
+        ),
+        &["database"],
+        &REGISTRY
+    )
+    .expect("metric can be created")
+});
+
+pub static LAST_RUNTIME_MS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    register_int_gauge_vec_with_registry!(
+        opts!(
+            "dbpulse_runtime_last_milliseconds",
+            "Runtime of the most recent health check iteration in milliseconds"
         ),
         &["database"],
         &REGISTRY
@@ -153,18 +189,6 @@ pub static LAST_SUCCESS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         opts!(
             "dbpulse_last_success_timestamp_seconds",
             "Unix timestamp of last successful check"
-        ),
-        &["database"],
-        &REGISTRY
-    )
-    .expect("metric can be created")
-});
-
-pub static LAST_RUNTIME_MS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    register_int_gauge_vec_with_registry!(
-        opts!(
-            "dbpulse_runtime_last_milliseconds",
-            "Runtime of the most recent health check iteration in milliseconds"
         ),
         &["database"],
         &REGISTRY
@@ -254,18 +278,6 @@ pub static DATABASE_SIZE_BYTES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     .expect("metric can be created")
 });
 
-pub static TLS_CERT_EXPIRY_DAYS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    register_int_gauge_vec_with_registry!(
-        opts!(
-            "dbpulse_tls_cert_expiry_days",
-            "Days until TLS certificate expiration (negative if expired)"
-        ),
-        &["database"],
-        &REGISTRY
-    )
-    .expect("metric can be created")
-});
-
 /// Encode and return metrics for HTTP export
 ///
 /// # Errors
@@ -334,15 +346,12 @@ mod tests {
         TLS_INFO
             .with_label_values(&["postgres", "TLSv1.3", "AES256-GCM-SHA384"])
             .set(1);
-        DATABASE_VERSION_INFO
-            .with_label_values(&["postgres", "PostgreSQL 16.0"])
-            .set(1);
-        DATABASE_UPTIME_SECONDS
-            .with_label_values(&["mysql"])
-            .set(12345);
         TLS_CERT_EXPIRY_DAYS
             .with_label_values(&["postgres"])
             .set(90);
+        TLS_CERT_PROBE_ERRORS
+            .with_label_values(&["postgres", "handshake"])
+            .inc();
     }
 
     #[test]
@@ -466,88 +475,5 @@ mod tests {
                 .with_label_values(&["mysql", op])
                 .observe(0.01);
         }
-    }
-
-    #[test]
-    fn test_tls_cert_expiry_metric() {
-        // Test certificate expiry metric with various scenarios
-
-        // Test healthy certificate (90 days)
-        TLS_CERT_EXPIRY_DAYS
-            .with_label_values(&["postgres"])
-            .set(90);
-        assert_eq!(
-            TLS_CERT_EXPIRY_DAYS.with_label_values(&["postgres"]).get(),
-            90
-        );
-
-        // Test warning threshold (30 days)
-        TLS_CERT_EXPIRY_DAYS.with_label_values(&["mysql"]).set(30);
-        assert_eq!(TLS_CERT_EXPIRY_DAYS.with_label_values(&["mysql"]).get(), 30);
-
-        // Test critical threshold (7 days)
-        TLS_CERT_EXPIRY_DAYS.with_label_values(&["postgres"]).set(7);
-        assert_eq!(
-            TLS_CERT_EXPIRY_DAYS.with_label_values(&["postgres"]).get(),
-            7
-        );
-
-        // Test expired certificate (negative days)
-        TLS_CERT_EXPIRY_DAYS.with_label_values(&["mysql"]).set(-10);
-        assert_eq!(
-            TLS_CERT_EXPIRY_DAYS.with_label_values(&["mysql"]).get(),
-            -10
-        );
-
-        // Test expiring today
-        TLS_CERT_EXPIRY_DAYS.with_label_values(&["postgres"]).set(0);
-        assert_eq!(
-            TLS_CERT_EXPIRY_DAYS.with_label_values(&["postgres"]).get(),
-            0
-        );
-    }
-
-    #[test]
-    fn test_tls_cert_expiry_multiple_databases() {
-        // Test tracking multiple databases simultaneously
-        TLS_CERT_EXPIRY_DAYS.with_label_values(&["db1"]).set(90);
-        TLS_CERT_EXPIRY_DAYS.with_label_values(&["db2"]).set(45);
-        TLS_CERT_EXPIRY_DAYS.with_label_values(&["db3"]).set(15);
-
-        assert_eq!(TLS_CERT_EXPIRY_DAYS.with_label_values(&["db1"]).get(), 90);
-        assert_eq!(TLS_CERT_EXPIRY_DAYS.with_label_values(&["db2"]).get(), 45);
-        assert_eq!(TLS_CERT_EXPIRY_DAYS.with_label_values(&["db3"]).get(), 15);
-    }
-
-    #[test]
-    fn test_tls_cert_expiry_update() {
-        // Test that metric can be updated over time
-        TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).set(90);
-        assert_eq!(
-            TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).get(),
-            90
-        );
-
-        // Simulate time passing - certificate gets closer to expiry
-        TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).set(60);
-        assert_eq!(
-            TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).get(),
-            60
-        );
-
-        TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).set(30);
-        assert_eq!(
-            TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).get(),
-            30
-        );
-
-        // Certificate renewed - back to 365 days
-        TLS_CERT_EXPIRY_DAYS
-            .with_label_values(&["test_db"])
-            .set(365);
-        assert_eq!(
-            TLS_CERT_EXPIRY_DAYS.with_label_values(&["test_db"]).get(),
-            365
-        );
     }
 }

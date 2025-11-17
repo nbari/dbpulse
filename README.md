@@ -167,312 +167,50 @@ dbpulse --dsn "postgres://postgres:postgres@tcp(localhost:5432)/test" -i 10 -r 5
 
 ## How It Works
 
-### Production Safety Design
+dbpulse performs database health checks in a simple, repeating cycle:
 
-`dbpulse` is designed from the ground up to be safe for production use. It performs **minimal, controlled operations** that have negligible impact on database performance.
+### 1. Configuration from DSN
 
-### The Monitoring Table
+All TLS/SSL settings come from the DSN query parameters (no separate flags):
 
-Creates a single lightweight table for health checks:
-
-**PostgreSQL:**
-```sql
-CREATE TABLE IF NOT EXISTS dbpulse_rw (
-    id INTEGER PRIMARY KEY,
-    uuid UUID NOT NULL,
-    ts TIMESTAMP NOT NULL DEFAULT NOW()
-)
+```bash
+# TLS configuration is in the DSN string
+--dsn "postgres://user:pass@host:5432/db?sslmode=verify-full&sslrootcert=/etc/ssl/ca.crt"
 ```
 
-**MySQL/MariaDB:**
-```sql
-CREATE TABLE IF NOT EXISTS dbpulse_rw (
-    id INTEGER PRIMARY KEY,
-    uuid VARCHAR(36) NOT NULL,
-    ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB
-```
+The DSN parser extracts `sslmode`, `sslrootcert`, `sslcert`, and `sslkey` parameters into a `TlsConfig` struct used for both database and certificate connections.
 
-**Characteristics:**
-- **Small footprint**: 3 columns, typically < 1000 rows
-- **Primary key**: Integer ID for fast lookups and updates
-- **Indexed**: Primary key ensures O(1) operations
-- **Automatic cleanup**: Old records deleted to prevent unbounded growth
+### 2. Health Check Cycle
 
-### Query Operations (Per Health Check Cycle)
+Every interval (default: 30 seconds), dbpulse makes **two connections**:
 
-#### 1. Connection & Version Check
-```sql
--- PostgreSQL
-SELECT version();
-SELECT pg_is_in_recovery();
+**Connection #1 - Database Operations (SQLx):**
+- Connects with proper TLS verification based on `sslmode`
+- Executes write test (INSERT/UPDATE with unique UUID)
+- Verifies read operation (SELECT to confirm data)
+- Collects metrics (table size, replication lag, blocking queries)
+- Queries TLS info from database (`pg_stat_ssl` or `SHOW STATUS LIKE 'Ssl%'`)
 
--- MySQL/MariaDB
-SELECT VERSION();
-SELECT @@read_only;
-```
-**Impact:** Read-only, metadata query. Zero table locks, instant response.
+**Connection #2 - Certificate Inspection (Probe):**
+- Opens separate TLS connection to database server
+- Performs STARTTLS negotiation (protocol-specific)
+- Extracts certificate metadata (subject, issuer, expiry date)
+- Closes immediately (no database queries)
 
-#### 2. Timeout Protection Setup
-```sql
--- PostgreSQL
-SET LOCAL statement_timeout = 5000;  -- 5 seconds
-SET LOCAL lock_timeout = 2000;       -- 2 seconds
+Both connections use the same TLS configuration from the DSN. The probe connection uses a `NoVerifier` to inspect certificates without validation (actual security happens in Connection #1).
 
--- MySQL/MariaDB
-SET max_execution_time = 5000;       -- 5 seconds (milliseconds)
-SET innodb_lock_wait_timeout = 2;    -- 2 seconds
-```
-**Safety:** Prevents health checks from hanging on locked tables or long-running queries.
+**Why two connections?** SQLx doesn't expose peer certificates from its internal TLS stream, so certificate metadata must be extracted separately.
 
-#### 3. Write Operation (INSERT or UPDATE)
-```sql
--- Try INSERT first (new ID)
-INSERT INTO dbpulse_rw (id, uuid, ts)
-VALUES ($1, $2, NOW());
+### 3. Metrics Export
 
--- If ID exists, UPDATE instead
-UPDATE dbpulse_rw
-SET uuid = $1, ts = NOW()
-WHERE id = $2;
-```
-**Impact:**
-- Single row operation (1 write per check)
-- Uses primary key (indexed, O(1) lookup)
-- Minimal WAL/binlog impact (~50 bytes per operation)
-- No table scans, no full table locks
+Results are merged and exposed as Prometheus metrics on `/metrics`:
+- Health status, latency, error rates
+- TLS version, cipher suite (from Connection #1)
+- Certificate subject, issuer, expiry days (from Connection #2)
 
-#### 4. Read Verification
-```sql
-SELECT uuid FROM dbpulse_rw WHERE id = $1;
-```
-**Impact:**
-- Primary key lookup (O(1), uses index)
-- Zero table locks
-- Instant response (<1ms typically)
+**Performance:** Each check takes ~100-150ms total. Certificate caching can reduce this by 98% (see `src/tls/cache.rs`).
 
-#### 5. Transaction Rollback Test
-```sql
-BEGIN;
-UPDATE dbpulse_rw SET uuid = $1 WHERE id = $2;
-ROLLBACK;
-```
-**Impact:**
-- Tests transaction capability
-- Changes rolled back (zero persistent impact)
-- Validates MVCC/transaction isolation
-
-#### 6. Cleanup (Periodic)
-```sql
--- PostgreSQL
-DELETE FROM dbpulse_rw
-WHERE ts < NOW() - INTERVAL '24 hours'
-LIMIT 10000;
-
--- MySQL/MariaDB
-DELETE FROM dbpulse_rw
-WHERE ts < DATE_SUB(NOW(), INTERVAL 24 HOUR)
-LIMIT 10000;
-```
-**Safety:**
-- Runs only when table has data
-- `LIMIT 10000` prevents long-running DELETEs
-- Uses timestamp index for efficient cleanup
-- Keeps table size bounded (<1000 rows typically)
-
-#### 7. Table Drop Protection
-```sql
--- Only drops if row count < 100,000
-DROP TABLE IF EXISTS dbpulse_rw;
-```
-**Safety:** Prevents accidental data loss if table accumulated significant data.
-
-### Operational Metrics (Best-Effort Queries)
-
-These queries collect additional metrics but **never fail the health check** if they error:
-
-```sql
--- Replication Lag (PostgreSQL)
-SELECT EXTRACT(EPOCH FROM (NOW() - pg_last_xact_replay_timestamp()));
-
--- Replication Lag (MySQL)
-SHOW REPLICA STATUS;
-
--- Blocking Queries (PostgreSQL)
-SELECT COUNT(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock';
-
--- Blocking Queries (MySQL)
-SELECT COUNT(*) FROM information_schema.processlist
-WHERE state LIKE '%lock%';
-
--- Database Size (PostgreSQL)
-SELECT pg_database_size(current_database());
-
--- Database Size (MySQL)
-SELECT SUM(data_length + index_length)
-FROM information_schema.TABLES
-WHERE table_schema = DATABASE();
-
--- Table Statistics
-SELECT pg_relation_size('dbpulse_rw');  -- PostgreSQL
-SELECT data_length FROM information_schema.TABLES
-WHERE table_name = 'dbpulse_rw';        -- MySQL
-```
-
-**Pattern:** All use `if let Ok(...)` - failures are logged but don't affect pulse status.
-
-### Why It's Safe for Production
-
-#### ✅ Minimal Resource Impact
-- **1 row write** per health check (typically 30s intervals)
-- **2-3 row reads** per check (primary key lookups)
-- **< 100 bytes** of data per check
-- **No table scans** - all queries use primary key or indexes
-- **No long-running queries** - timeouts ensure operations complete in seconds
-
-#### ✅ No Disruption to Application Traffic
-- **Separate table** - isolated from application data
-- **No locks on application tables** - only touches `dbpulse_rw`
-- **Non-blocking operations** - primary key operations don't block readers
-- **Short transaction duration** - writes complete in milliseconds
-
-#### ✅ Bounded Resource Usage
-- **Table size limited** - automatic cleanup keeps < 1000 rows
-- **DELETE limits** - max 10,000 rows per cleanup prevents long locks
-- **Connection pooling** - single connection per check, properly closed
-- **Memory footprint** - tiny table, minimal index overhead
-
-#### ✅ Protection Against Failures
-- **Timeout protection** - never hangs on locked tables
-- **Graceful degradation** - optional metrics don't fail health checks
-- **Error isolation** - panic recovery prevents monitoring loop crashes
-- **Connection cleanup** - proper FIN packets, no "connection reset" errors
-
-#### ✅ Production Validation
-- **100 unit tests** covering edge cases and failure modes
-- **Integration tests** with real PostgreSQL and MariaDB containers
-- **TLS tests** validating secure connections
-- **Robustness tests** for panic recovery and concurrent operations
-
-### Resource Estimates (30-second interval)
-
-| Resource | Per Check | Per Hour | Per Day |
-|----------|-----------|----------|---------|
-| **Writes** | 1 row | 120 rows | 2,880 rows |
-| **Reads** | 2-3 rows | 240-360 rows | 5,760-8,640 rows |
-| **Data Written** | ~50 bytes | ~6 KB | ~144 KB |
-| **WAL/Binlog** | ~50 bytes | ~6 KB | ~144 KB |
-| **Disk I/O** | < 1 KB | < 120 KB | < 3 MB |
-| **CPU** | < 1ms | < 2s | < 48s |
-
-**Comparison:** A single application query typically touches more data than an entire day of health checks.
-
-### Compatibility
-
-- **PostgreSQL**: 9.6+ (tested with 12, 13, 14, 15, 16, 17)
-- **MySQL**: 5.7+, 8.0+
-- **MariaDB**: 10.x, 11.x
-- **Galera Cluster**: Fully compatible, detects flow-control and HALT states
-- **Cloud Databases**: AWS RDS, Aurora, Azure Database, Google Cloud SQL
-- **Managed Services**: Aiven, DigitalOcean, Heroku Postgres
-
-### Interval Scheduling Behavior
-
-**How the interval works:**
-
-Each health check cycle follows this pattern:
-
-```rust
-1. Start health check (record start time)
-2. Perform all operations (connect, write, read, cleanup, etc.)
-3. Complete health check (record end time)
-4. Calculate: remaining_time = interval - actual_runtime
-5. If remaining_time > 0: Sleep for remaining_time
-6. If remaining_time <= 0: Start next check immediately (no sleep)
-```
-
-**Important characteristics:**
-
-- ✅ **Operations never overlap** - Each check completes before the next starts
-- ✅ **Operations never queue** - Only one check runs at a time
-- ⚠️ **No breaks if operations are slow** - If runtime > interval, next check starts immediately
-
-**Examples with different intervals:**
-
-| Interval | Health Check Runtime | Behavior |
-|----------|---------------------|----------|
-| 30s | 0.5s | ✅ Sleeps 29.5s, total cycle = 30s |
-| 30s | 5s | ✅ Sleeps 25s, total cycle = 30s |
-| 30s | 35s | ⚠️ No sleep, next check starts immediately |
-| 1s | 0.1s | ✅ Sleeps 0.9s, total cycle = 1s |
-| 1s | 0.5s | ✅ Sleeps 0.5s, total cycle = 1s |
-| 1s | 1.2s | ⚠️ No sleep, continuous checks |
-| 1s | 2s | ⚠️ No sleep, back-to-back checks |
-
-**⚠️ Warning: Aggressive Intervals**
-
-Setting `--interval 1` (or any very low value) can cause issues:
-
-**Scenario: Health check takes 2 seconds, interval set to 1 second**
-```
-00:00.0 - Start check #1
-00:02.0 - Complete check #1 (took 2s)
-00:02.0 - Start check #2 immediately (no sleep, 2s > 1s)
-00:04.0 - Complete check #2
-00:04.0 - Start check #3 immediately
-...
-```
-
-**Result:** Continuous database operations with zero breaks between checks.
-
-**Potential problems:**
-- 🔴 **Database stress** - Constant connections, writes, and reads
-- 🔴 **Connection pool exhaustion** - Rapid connection churn
-- 🔴 **Metrics flooding** - Prometheus scrapes overwhelmed with data points
-- 🔴 **False positives** - Timeouts due to self-induced load, not actual issues
-- 🔴 **Resource waste** - CPU, network, and I/O constantly busy
-
-**Recommended interval values:**
-
-| Use Case | Recommended Interval | Reason |
-|----------|---------------------|---------|
-| **Production** | 30-60s | Balanced monitoring with minimal overhead |
-| **Critical systems** | 10-15s | More frequent checks without stress |
-| **Development/Testing** | 5-10s | Quick feedback during debugging |
-| **High-latency networks** | 60-120s | Account for network delays |
-| **Avoid** | < 5s | Risk of continuous hammering if checks are slow |
-
-**Best Practice Formula:**
-```
-Recommended Interval = (Expected Health Check Duration × 3) + Safety Margin
-
-Examples:
-- Health check typically takes 0.5s → Use 5-10s interval
-- Health check typically takes 2s → Use 10-30s interval
-- Health check typically takes 5s → Use 30-60s interval
-```
-
-**Monitoring health check performance:**
-
-Use the `dbpulse_runtime_last_milliseconds` metric to see how long checks actually take:
-
-```promql
-# View health check duration
-dbpulse_runtime_last_milliseconds
-
-# Alert if health checks take too long for your interval
-dbpulse_runtime_last_milliseconds / 1000 > (your_interval * 0.8)
-```
-
-**Recovery from panics:**
-
-If a health check panics (unexpected error), dbpulse:
-1. Recovers from the panic (doesn't crash)
-2. Sets pulse to 0 (unhealthy)
-3. Increments `dbpulse_panics_recovered_total`
-4. **Always sleeps for the full interval** before retrying (even if panic was quick)
-
-This prevents panic loops from hammering the database.
+---
 
 ## What It Monitors
 
@@ -520,8 +258,6 @@ dbpulse exposes comprehensive Prometheus-compatible metrics on the `/metrics` en
 | `dbpulse_iterations_total` | Counter | Total checks by status (success/error) |
 | `dbpulse_last_success_timestamp_seconds` | Gauge | Unix timestamp of last successful check |
 | `dbpulse_database_readonly` | Gauge | Read-only mode indicator (1=read-only, 0=read-write) |
-| `dbpulse_database_version_info` | Gauge | Value `1` with `version` label describing DB server build |
-| `dbpulse_database_uptime_seconds` | Gauge | How long the database has been up (seconds) |
 
 ### Performance Metrics
 
@@ -561,6 +297,7 @@ dbpulse exposes comprehensive Prometheus-compatible metrics on the `/metrics` en
 | `dbpulse_tls_handshake_duration_seconds` | Histogram | TLS handshake duration |
 | `dbpulse_tls_connection_errors_total` | Counter | TLS-specific connection errors |
 | `dbpulse_tls_info` | Gauge | TLS version and cipher suite (labels: version, cipher) |
+| `dbpulse_tls_cert_expiry_days` | Gauge | Days until TLS certificate expiration (negative if expired) |
 
 For complete documentation, PromQL examples, and alert rules, see [grafana/README.md](grafana/README.md).
 
@@ -583,6 +320,12 @@ rate(dbpulse_errors_total[5m])
 # Connection time
 rate(dbpulse_operation_duration_seconds_sum{operation="connect"}[5m]) /
   rate(dbpulse_operation_duration_seconds_count{operation="connect"}[5m])
+
+# TLS certificate expiry (days remaining)
+dbpulse_tls_cert_expiry_days
+
+# Certificates expiring within 30 days
+dbpulse_tls_cert_expiry_days < 30 and dbpulse_tls_cert_expiry_days > 0
 ```
 
 ### Example Alerts
@@ -605,6 +348,24 @@ rate(dbpulse_operation_duration_seconds_sum{operation="connect"}[5m]) /
   for: 1m
   labels:
     severity: critical
+
+- alert: TLSCertificateExpiringSoon
+  expr: dbpulse_tls_cert_expiry_days < 30 and dbpulse_tls_cert_expiry_days > 0
+  for: 1h
+  labels:
+    severity: warning
+  annotations:
+    summary: "TLS certificate expires in {{ $value }} days"
+    description: "Database {{ $labels.database }} TLS certificate will expire soon"
+
+- alert: TLSCertificateExpired
+  expr: dbpulse_tls_cert_expiry_days < 0
+  for: 5m
+  labels:
+    severity: critical
+  annotations:
+    summary: "TLS certificate has expired"
+    description: "Database {{ $labels.database }} TLS certificate expired {{ $value | abs }} days ago"
 ```
 
 
@@ -754,13 +515,6 @@ Environment="DBPULSE_PORT=9300"
 ExecStart=/usr/local/bin/dbpulse
 Restart=always
 RestartSec=10
-
-# Security hardening
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadOnlyPaths=/etc/ssl
 
 [Install]
 WantedBy=multi-user.target

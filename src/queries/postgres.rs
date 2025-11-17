@@ -1,22 +1,27 @@
+use std::time::Instant;
+
 use anyhow::{Context, Result, anyhow};
-use chrono::prelude::*;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, prelude::*};
 use dsn::DSN;
 use rand::Rng;
 use sqlx::{
     ConnectOptions, Connection, Row,
     postgres::{PgConnectOptions, PgDatabaseError, PgSslMode},
 };
-use std::time::Instant;
 use uuid::Uuid;
 
 use super::HealthCheckResult;
-use crate::metrics::{
-    BLOCKING_QUERIES, CONNECTION_DURATION, CONNECTIONS_ACTIVE, DATABASE_SIZE_BYTES,
-    OPERATION_DURATION, REPLICATION_LAG, ROWS_AFFECTED, TABLE_ROWS, TABLE_SIZE_BYTES,
-    TLS_HANDSHAKE_DURATION,
+use crate::{
+    metrics::{
+        BLOCKING_QUERIES, CONNECTION_DURATION, CONNECTIONS_ACTIVE, DATABASE_SIZE_BYTES,
+        OPERATION_DURATION, REPLICATION_LAG, ROWS_AFFECTED, TABLE_ROWS, TABLE_SIZE_BYTES,
+        TLS_CERT_PROBE_ERRORS, TLS_HANDSHAKE_DURATION,
+    },
+    tls::{
+        TlsConfig, TlsMetadata, TlsMode, TlsProbeProtocol, ensure_crypto_provider,
+        probe_certificate_expiry,
+    },
 };
-use crate::tls::{TlsConfig, TlsMetadata, TlsMode};
 
 /// Test read/write operations on the default table
 ///
@@ -45,6 +50,7 @@ pub async fn test_rw_with_table(
     tls: &TlsConfig,
     table_name: &str,
 ) -> Result<HealthCheckResult> {
+    ensure_crypto_provider();
     let mut options = PgConnectOptions::new()
         .username(dsn.username.clone().unwrap_or_default().as_ref())
         .password(dsn.password.clone().unwrap_or_default().as_str())
@@ -190,7 +196,7 @@ pub async fn test_rw_with_table(
         }
 
         let tls_metadata = if tls.mode.is_enabled() {
-            extract_tls_metadata(&mut conn).await.ok()
+            extract_tls_metadata(dsn, tls, &mut conn).await.ok()
         } else {
             None
         };
@@ -207,7 +213,7 @@ pub async fn test_rw_with_table(
     // Check if transaction is read-only (even if not in recovery)
     if tx_read_only.0.to_lowercase() == "on" {
         let tls_metadata = if tls.mode.is_enabled() {
-            extract_tls_metadata(&mut conn).await.ok()
+            extract_tls_metadata(dsn, tls, &mut conn).await.ok()
         } else {
             None
         };
@@ -441,23 +447,6 @@ pub async fn test_rw_with_table(
         }
     }
 
-    // Always refresh table row gauge so Grafana panels don't go stale.
-    let count_sql = format!("SELECT COUNT(*) FROM {table_name}");
-    match sqlx::query_scalar::<_, i64>(&count_sql)
-        .fetch_optional(&mut conn)
-        .await
-    {
-        Ok(Some(row_count)) => TABLE_ROWS
-            .with_label_values(&["postgres", table_name])
-            .set(row_count),
-        Ok(None) => TABLE_ROWS
-            .with_label_values(&["postgres", table_name])
-            .set(0),
-        Err(e) => {
-            eprintln!("Failed to refresh postgres table row count: {e}");
-        }
-    }
-
     // Query table size in bytes (optional, but useful for monitoring)
     let size_sql = format!("SELECT pg_total_relation_size('{table_name}')");
     if let Ok(Some(table_bytes)) = sqlx::query_scalar::<_, i64>(&size_sql)
@@ -482,7 +471,7 @@ pub async fn test_rw_with_table(
 
     // Extract TLS metadata if TLS is enabled
     let tls_metadata = if tls.mode.is_enabled() {
-        extract_tls_metadata(&mut conn).await.ok()
+        extract_tls_metadata(dsn, tls, &mut conn).await.ok()
     } else {
         None
     };
@@ -500,28 +489,60 @@ pub async fn test_rw_with_table(
 }
 
 /// Extract TLS metadata from `PostgreSQL` connection
-async fn extract_tls_metadata(conn: &mut sqlx::PgConnection) -> Result<TlsMetadata> {
+async fn extract_tls_metadata(
+    dsn: &DSN,
+    tls: &TlsConfig,
+    conn: &mut sqlx::PgConnection,
+) -> Result<TlsMetadata> {
     // Query pg_stat_ssl for TLS information
-    // Note: PostgreSQL's pg_stat_ssl doesn't expose certificate expiry information
-    // Certificate metadata (subject, issuer, expiry) would require server-side access
-    // or PostgreSQL extensions. For production use, monitor server certificates externally.
     let row = sqlx::query("SELECT version, cipher FROM pg_stat_ssl WHERE pid = pg_backend_pid()")
         .fetch_optional(conn)
         .await?;
 
-    row.map_or_else(
-        || Ok(TlsMetadata::default()),
-        |row| {
-            let version: Option<String> = row.try_get(0).ok();
-            let cipher: Option<String> = row.try_get(1).ok();
+    let mut metadata = row.map_or_else(TlsMetadata::default, |row| {
+        let version: Option<String> = row.try_get(0).ok();
+        let cipher: Option<String> = row.try_get(1).ok();
 
-            Ok(TlsMetadata {
-                version,
-                cipher,
-                cert_subject: None,
-                cert_issuer: None,
-                cert_expiry_days: None,
-            })
-        },
-    )
+        TlsMetadata {
+            version,
+            cipher,
+            ..Default::default()
+        }
+    });
+
+    if tls.mode.is_enabled() {
+        match probe_certificate_expiry(dsn, 5432, TlsProbeProtocol::Postgres, tls).await {
+            Ok(Some(probe_metadata)) => {
+                // Merge probe metadata (subject, issuer, expiry) with connection metadata (version, cipher)
+                metadata.cert_subject = probe_metadata.cert_subject;
+                metadata.cert_issuer = probe_metadata.cert_issuer;
+                metadata.cert_expiry_days = probe_metadata.cert_expiry_days;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                eprintln!("failed to probe PostgreSQL TLS certificate: {err}");
+                // Track certificate probe errors by type
+                let error_type = if err.to_string().contains("connect")
+                    || err.to_string().contains("Connection")
+                {
+                    "connection"
+                } else if err.to_string().contains("handshake") || err.to_string().contains("TLS") {
+                    "handshake"
+                } else if err.to_string().contains("timeout") {
+                    "timeout"
+                } else if err.to_string().contains("parse")
+                    || err.to_string().contains("certificate")
+                {
+                    "parse"
+                } else {
+                    "unknown"
+                };
+                TLS_CERT_PROBE_ERRORS
+                    .with_label_values(&["postgres", error_type])
+                    .inc();
+            }
+        }
+    }
+
+    Ok(metadata)
 }

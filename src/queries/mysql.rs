@@ -1,22 +1,29 @@
+use std::time::Instant;
+
 use anyhow::{Context, Result, anyhow};
-use chrono::prelude::*;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, prelude::*};
 use dsn::DSN;
 use rand::Rng;
 use sqlx::{
     ConnectOptions, Connection, Executor, Row,
     mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlSslMode},
 };
-use std::time::Instant;
 use uuid::Uuid;
 
 use super::HealthCheckResult;
-use crate::metrics::{
-    BLOCKING_QUERIES, CONNECTION_DURATION, CONNECTIONS_ACTIVE, DATABASE_SIZE_BYTES,
-    OPERATION_DURATION, REPLICATION_LAG, ROWS_AFFECTED, TABLE_ROWS, TABLE_SIZE_BYTES,
-    TLS_HANDSHAKE_DURATION,
+use crate::{
+    metrics::{
+        BLOCKING_QUERIES, CONNECTION_DURATION, CONNECTIONS_ACTIVE, DATABASE_SIZE_BYTES,
+        OPERATION_DURATION, REPLICATION_LAG, ROWS_AFFECTED, TABLE_ROWS, TABLE_SIZE_BYTES,
+        TLS_CERT_PROBE_ERRORS, TLS_HANDSHAKE_DURATION,
+    },
+    tls::{
+        TlsConfig, TlsMetadata, TlsMode, TlsProbeProtocol, ensure_crypto_provider,
+        probe_certificate_expiry,
+    },
 };
-use crate::tls::{TlsConfig, TlsMetadata, TlsMode};
+
+const MYSQL_SSL_DATE_FORMATS: [&str; 2] = ["%b %e %H:%M:%S %Y GMT", "%Y-%m-%d %H:%M:%S"];
 
 /// Test read/write operations on the default table
 ///
@@ -45,6 +52,7 @@ pub async fn test_rw_with_table(
     tls: &TlsConfig,
     table_name: &str,
 ) -> Result<HealthCheckResult> {
+    ensure_crypto_provider();
     let mut options = MySqlConnectOptions::new()
         .username(dsn.username.clone().unwrap_or_default().as_ref())
         .password(dsn.password.clone().unwrap_or_default().as_str())
@@ -173,10 +181,9 @@ pub async fn test_rw_with_table(
         .ok()
         .flatten()
         .and_then(|row| {
-            row.try_get::<String, _>(1)
+            row.try_get::<String, _>("Value")
                 .ok()
-                .and_then(|value| value.parse::<i64>().ok())
-                .or_else(|| row.try_get::<i64, _>(1).ok())
+                .and_then(|s| s.parse::<i64>().ok())
         });
 
     // check if db is in read-only mode
@@ -216,7 +223,7 @@ pub async fn test_rw_with_table(
         }
 
         let tls_metadata = if tls.mode.is_enabled() {
-            extract_tls_metadata(&mut conn).await.ok()
+            extract_tls_metadata(dsn, tls, &mut conn).await.ok()
         } else {
             None
         };
@@ -417,21 +424,6 @@ pub async fn test_rw_with_table(
         }
     }
 
-    // Always refresh the row count gauge so dashboards stay current.
-    let count_sql = format!("SELECT COUNT(*) FROM {table_name}");
-    match sqlx::query_scalar::<_, i64>(&count_sql)
-        .fetch_optional(&mut conn)
-        .await
-    {
-        Ok(Some(row_count)) => TABLE_ROWS
-            .with_label_values(&["mysql", table_name])
-            .set(row_count),
-        Ok(None) => TABLE_ROWS.with_label_values(&["mysql", table_name]).set(0),
-        Err(e) => {
-            eprintln!("Failed to refresh mysql table row count: {e}");
-        }
-    }
-
     // Query table size in bytes (optional, but useful for monitoring)
     let size_sql = "SELECT data_length + index_length FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name = ?";
     if let Ok(Some(table_bytes)) = sqlx::query_scalar::<_, i64>(size_sql)
@@ -458,7 +450,7 @@ pub async fn test_rw_with_table(
 
     // Extract TLS metadata if TLS is enabled
     let tls_metadata = if tls.mode.is_enabled() {
-        extract_tls_metadata(&mut conn).await.ok()
+        extract_tls_metadata(dsn, tls, &mut conn).await.ok()
     } else {
         None
     };
@@ -476,7 +468,48 @@ pub async fn test_rw_with_table(
 }
 
 /// Extract TLS metadata from `MySQL` connection
-async fn extract_tls_metadata(conn: &mut sqlx::MySqlConnection) -> Result<TlsMetadata> {
+async fn extract_tls_metadata(
+    dsn: &DSN,
+    tls: &TlsConfig,
+    conn: &mut sqlx::MySqlConnection,
+) -> Result<TlsMetadata> {
+    let mut cert_subject: Option<String> = None;
+    let mut cert_issuer: Option<String> = None;
+    let mut cert_expiry_days: Option<i64> = None;
+
+    if tls.mode.is_enabled() {
+        match probe_certificate_expiry(dsn, 3306, TlsProbeProtocol::Mysql, tls).await {
+            Ok(Some(probe_metadata)) => {
+                cert_subject = probe_metadata.cert_subject;
+                cert_issuer = probe_metadata.cert_issuer;
+                cert_expiry_days = probe_metadata.cert_expiry_days;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                eprintln!("failed to probe MySQL TLS certificate: {err}");
+                // Track certificate probe errors by type
+                let error_type = if err.to_string().contains("connect")
+                    || err.to_string().contains("Connection")
+                {
+                    "connection"
+                } else if err.to_string().contains("handshake") || err.to_string().contains("TLS") {
+                    "handshake"
+                } else if err.to_string().contains("timeout") {
+                    "timeout"
+                } else if err.to_string().contains("parse")
+                    || err.to_string().contains("certificate")
+                {
+                    "parse"
+                } else {
+                    "unknown"
+                };
+                TLS_CERT_PROBE_ERRORS
+                    .with_label_values(&["mysql", error_type])
+                    .inc();
+            }
+        }
+    }
+
     // Query SSL status variables
     let rows = sqlx::query("SHOW STATUS LIKE 'Ssl%'")
         .fetch_all(conn)
@@ -484,9 +517,6 @@ async fn extract_tls_metadata(conn: &mut sqlx::MySqlConnection) -> Result<TlsMet
 
     let mut tls_version: Option<String> = None;
     let mut tls_cipher: Option<String> = None;
-    let mut cert_subject: Option<String> = None;
-    let mut cert_issuer: Option<String> = None;
-    let mut cert_not_after: Option<String> = None;
 
     for row in rows {
         let variable_name: String = row.try_get(0)?;
@@ -504,30 +534,15 @@ async fn extract_tls_metadata(conn: &mut sqlx::MySqlConnection) -> Result<TlsMet
                 }
             }
             "Ssl_server_not_after" => {
-                if !value.is_empty() {
-                    cert_not_after = Some(value);
-                }
-            }
-            "Ssl_server_subject" => {
-                if !value.is_empty() {
-                    cert_subject = Some(value);
-                }
-            }
-            "Ssl_server_issuer" => {
-                if !value.is_empty() {
-                    cert_issuer = Some(value);
+                if cert_expiry_days.is_none()
+                    && let Some(days) = parse_mysql_ssl_expiry(&value)
+                {
+                    cert_expiry_days = Some(days);
                 }
             }
             _ => {}
         }
     }
-
-    // Calculate days until certificate expiration
-    let cert_expiry_days = cert_not_after.and_then(|not_after| {
-        // Parse the date format: "MMM DD HH:MM:SS YYYY GMT"
-        // Example: "Dec 31 23:59:59 2025 GMT"
-        parse_cert_expiry_date(&not_after)
-    });
 
     Ok(TlsMetadata {
         version: tls_version,
@@ -538,123 +553,36 @@ async fn extract_tls_metadata(conn: &mut sqlx::MySqlConnection) -> Result<TlsMet
     })
 }
 
-/// Parse certificate expiry date and calculate days until expiration
-/// Returns negative days if certificate has expired
-fn parse_cert_expiry_date(date_str: &str) -> Option<i64> {
-    use chrono::{DateTime, Utc};
+fn parse_mysql_ssl_expiry(value: &str) -> Option<i64> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == "0000-00-00 00:00:00" {
+        return None;
+    }
 
-    // Try to parse the date string (MySQL format: "Dec 31 23:59:59 2025 GMT")
-    // Remove GMT suffix if present
-    let date_str = date_str.trim_end_matches(" GMT").trim();
+    for fmt in &MYSQL_SSL_DATE_FORMATS {
+        if let Ok(ts) = NaiveDateTime::parse_from_str(trimmed, fmt) {
+            let expiry = DateTime::<Utc>::from_naive_utc_and_offset(ts, Utc);
+            return Some((expiry - Utc::now()).num_days());
+        }
+    }
 
-    // Try parsing with chrono
-    DateTime::parse_from_str(&format!("{date_str} +0000"), "%b %d %H:%M:%S %Y %z").map_or(
-        None,
-        |expiry_date| {
-            let now = Utc::now();
-            let duration = expiry_date.signed_duration_since(now);
-            Some(duration.num_days())
-        },
-    )
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Duration, Utc};
 
     #[test]
-    fn test_parse_cert_expiry_date_valid() {
-        // Test parsing a valid MySQL certificate date format
-        // Create a date string 90 days in the future
-        let future_date = Utc::now() + Duration::days(90);
-        let date_str = format!("{} GMT", future_date.format("%b %d %H:%M:%S %Y"));
-
-        let days = parse_cert_expiry_date(&date_str);
-        assert!(days.is_some());
-        let days = days.unwrap();
-        // Should be around 90 days (allow for test execution time)
-        assert!((89..=91).contains(&days));
+    fn test_parse_mysql_ssl_expiry_valid_formats() {
+        assert!(parse_mysql_ssl_expiry("Jan  1 00:00:00 2100 GMT").is_some());
+        assert!(parse_mysql_ssl_expiry("2100-01-01 00:00:00").is_some());
     }
 
     #[test]
-    fn test_parse_cert_expiry_date_past() {
-        // Test with an expired certificate (30 days ago)
-        let past_date = Utc::now() - Duration::days(30);
-        let date_str = format!("{} GMT", past_date.format("%b %d %H:%M:%S %Y"));
-
-        let days = parse_cert_expiry_date(&date_str);
-        assert!(days.is_some());
-        let days = days.unwrap();
-        // Should be negative (around -30)
-        assert!((-31..=-29).contains(&days));
-    }
-
-    #[test]
-    fn test_parse_cert_expiry_date_without_gmt() {
-        // Test parsing without GMT suffix
-        let future_date = Utc::now() + Duration::days(60);
-        let date_str = format!("{}", future_date.format("%b %d %H:%M:%S %Y"));
-
-        let days = parse_cert_expiry_date(&date_str);
-        assert!(days.is_some());
-        let days = days.unwrap();
-        assert!((59..=61).contains(&days));
-    }
-
-    #[test]
-    fn test_parse_cert_expiry_date_invalid() {
-        // Test with invalid date format
-        let invalid_dates = vec![
-            "invalid date string",
-            "",
-            "2025-12-31 23:59:59", // Wrong format
-            "December 31 2025",    // Wrong format
-        ];
-
-        for date_str in invalid_dates {
-            let days = parse_cert_expiry_date(date_str);
-            assert!(days.is_none(), "Should fail for: {date_str}");
-        }
-    }
-
-    #[test]
-    fn test_parse_cert_expiry_date_edge_cases() {
-        // Test with certificate expiring today (very close to 0 days)
-        let today = Utc::now();
-        let date_str = format!("{} GMT", today.format("%b %d %H:%M:%S %Y"));
-
-        let days = parse_cert_expiry_date(&date_str);
-        assert!(days.is_some());
-        let days = days.unwrap();
-        // Should be 0 or very close to 0
-        assert!((-1..=1).contains(&days));
-    }
-
-    #[test]
-    fn test_parse_cert_expiry_date_far_future() {
-        // Test with certificate expiring in 365 days
-        let far_future = Utc::now() + Duration::days(365);
-        let date_str = format!("{} GMT", far_future.format("%b %d %H:%M:%S %Y"));
-
-        let days = parse_cert_expiry_date(&date_str);
-        assert!(days.is_some());
-        let days = days.unwrap();
-        assert!((364..=366).contains(&days));
-    }
-
-    #[test]
-    fn test_parse_cert_expiry_date_examples() {
-        // Test with real-world example formats from MySQL
-        let examples = vec![
-            "Dec 31 23:59:59 2025 GMT",
-            "Jan 01 00:00:00 2026 GMT",
-            "Jun 15 12:30:45 2025 GMT",
-        ];
-
-        for date_str in examples {
-            let days = parse_cert_expiry_date(date_str);
-            assert!(days.is_some(), "Should parse: {date_str}");
-        }
+    fn test_parse_mysql_ssl_expiry_invalid_formats() {
+        assert_eq!(parse_mysql_ssl_expiry(""), None);
+        assert_eq!(parse_mysql_ssl_expiry("0000-00-00 00:00:00"), None);
+        assert_eq!(parse_mysql_ssl_expiry("not a date"), None);
     }
 }

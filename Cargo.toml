@@ -1,6 +1,6 @@
 [package]
 name = "dbpulse"
-version = "0.7.3"
+version = "0.8.0"
 authors = ["Nicolas Embriz <nbari@tequila.io>"]
 description = "command line tool to monitor that database is available for read & write"
 documentation = "https://github.com/nbari/dbpulse/blob/master/README.md"
@@ -14,7 +14,6 @@ edition = "2024"
 
 [features]
 default = []
-musl = ["openssl/vendored"]
 
 [dependencies]
 anyhow = "1"
@@ -23,14 +22,18 @@ chrono = "0.4"
 clap = { version = "4.5", features = ["env"]}
 dsn = "1"
 futures = "0.3"
-openssl = { version = "0.10", optional = true, features = ["vendored"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "log", "std"] }
+rustls-pemfile = "2"
+x509-parser = "0.18"
 prometheus = { version = "0.14", features = ["process"] }
 rand = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.8", features = ["mysql", "postgres", "runtime-tokio", "uuid", "tls-rustls"] }
 tokio = { version ="1", features = ["full"]}
+tokio-rustls = "0.26"
 uuid = { version = "1.11", features = ["v4"] }
+webpki-roots = "1.0"
 
 [package.metadata.generate-rpm]
 assets = [
