@@ -1,15 +1,3 @@
-use std::time::Instant;
-
-use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, Utc, prelude::*};
-use dsn::DSN;
-use rand::Rng;
-use sqlx::{
-    ConnectOptions, Connection, Executor, Row,
-    mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlSslMode},
-};
-use uuid::Uuid;
-
 use super::HealthCheckResult;
 use crate::{
     metrics::{
@@ -22,6 +10,16 @@ use crate::{
         probe_certificate_expiry,
     },
 };
+use anyhow::{Context, Result, anyhow};
+use chrono::{DateTime, Utc, prelude::*};
+use dsn::DSN;
+use rand::Rng;
+use sqlx::{
+    ConnectOptions, Connection, Executor, Row,
+    mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlSslMode},
+};
+use std::time::Instant;
+use uuid::Uuid;
 
 const MYSQL_SSL_DATE_FORMATS: [&str; 2] = ["%b %e %H:%M:%S %Y GMT", "%Y-%m-%d %H:%M:%S"];
 

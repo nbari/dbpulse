@@ -1,8 +1,4 @@
-use std::{
-    fmt,
-    sync::{Arc, Mutex},
-};
-
+use super::TlsMetadata;
 use anyhow::{Result, anyhow};
 use chrono::Utc;
 use rustls::{
@@ -13,9 +9,11 @@ use rustls::{
     },
     pki_types::{CertificateDer, ServerName, UnixTime},
 };
+use std::{
+    fmt,
+    sync::{Arc, Mutex},
+};
 use x509_parser::prelude::{FromDer, X509Certificate};
-
-use super::TlsMetadata;
 
 /// Certificate metadata captured during TLS handshake
 #[derive(Debug, Clone, Default)]

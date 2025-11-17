@@ -61,11 +61,5 @@ jobs:
       - run: sudo apt -y install musl-dev musl-tools
         if: matrix.build == 'linux'
 
-      - name: Build (Linux musl)
-        if: matrix.build == 'linux'
-        run: cargo build --release --locked --target ${{ matrix.target }} --features
-          musl
-
       - name: Build
-        if: matrix.build != 'linux'
         run: cargo build --release --locked --target ${{ matrix.target }}

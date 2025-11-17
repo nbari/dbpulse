@@ -1,12 +1,3 @@
-use std::net::IpAddr;
-
-use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
-use chrono::{Duration, Utc, prelude::*};
-use dsn::DSN;
-use futures::FutureExt;
-use serde::{Deserialize, Serialize};
-use tokio::{net::TcpListener, sync::mpsc, task, time};
-
 use crate::{
     metrics::{
         DATABASE_UPTIME_SECONDS, DATABASE_VERSION_INFO, DB_ERRORS, DB_READONLY, ITERATIONS_TOTAL,
@@ -16,6 +7,13 @@ use crate::{
     queries::{mysql, postgres},
     tls::TlsConfig,
 };
+use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
+use chrono::{Duration, Utc, prelude::*};
+use dsn::DSN;
+use futures::FutureExt;
+use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
+use tokio::{net::TcpListener, sync::mpsc, task, time};
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 struct Pulse {

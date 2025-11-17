@@ -1,13 +1,11 @@
-use std::{net::IpAddr, path::PathBuf};
-
-use anyhow::{Context, Result};
-use clap::ArgMatches;
-use dsn::DSN;
-
 use crate::{
     cli::actions::Action,
     tls::{TlsConfig, TlsMode},
 };
+use anyhow::{Context, Result};
+use clap::ArgMatches;
+use dsn::DSN;
+use std::{net::IpAddr, path::PathBuf};
 
 /// Extract TLS configuration from DSN query parameters
 ///

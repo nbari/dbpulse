@@ -1,5 +1,3 @@
-use std::sync::LazyLock;
-
 use prometheus::{
     Encoder, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge,
     IntGaugeVec, Registry, opts, register_histogram_vec_with_registry,
@@ -7,6 +5,7 @@ use prometheus::{
     register_int_counter_with_registry, register_int_gauge_vec_with_registry,
     register_int_gauge_with_registry,
 };
+use std::sync::LazyLock;
 
 pub static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
 
