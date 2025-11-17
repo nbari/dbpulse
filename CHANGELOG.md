@@ -1,7 +1,5 @@
 ## 0.8.0 (2025-11-17)
 
-**MAJOR RELEASE** - TLS architecture refactoring and enhanced observability
-
 ### Breaking Changes
 * **TLS Dependency Migration**: Migrated from OpenSSL to Rustls
   - OpenSSL is no longer used or required as a build dependency
