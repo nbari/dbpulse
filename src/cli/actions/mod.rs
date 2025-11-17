@@ -1,8 +1,10 @@
 mod run;
 
-use crate::tls::TlsConfig;
-use dsn::DSN;
 use std::net::IpAddr;
+
+use dsn::DSN;
+
+use crate::tls::TlsConfig;
 
 /// Action enum representing each possible command
 #[derive(Debug)]

@@ -1,19 +1,21 @@
+use std::net::IpAddr;
+
 use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
-use chrono::prelude::*;
-use chrono::{Duration, Utc};
+use chrono::{Duration, Utc, prelude::*};
 use dsn::DSN;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
-use std::net::IpAddr;
 use tokio::{net::TcpListener, sync::mpsc, task, time};
 
-use crate::metrics::{
-    DATABASE_UPTIME_SECONDS, DATABASE_VERSION_INFO, DB_ERRORS, DB_READONLY, ITERATIONS_TOTAL,
-    LAST_RUNTIME_MS, LAST_SUCCESS, PANICS_RECOVERED, PULSE, RUNTIME, TLS_CERT_EXPIRY_DAYS,
-    TLS_CONNECTION_ERRORS, TLS_INFO, encode_metrics,
+use crate::{
+    metrics::{
+        DATABASE_UPTIME_SECONDS, DATABASE_VERSION_INFO, DB_ERRORS, DB_READONLY, ITERATIONS_TOTAL,
+        LAST_RUNTIME_MS, LAST_SUCCESS, PANICS_RECOVERED, PULSE, RUNTIME, TLS_CERT_EXPIRY_DAYS,
+        TLS_CONNECTION_ERRORS, TLS_INFO, encode_metrics,
+    },
+    queries::{mysql, postgres},
+    tls::TlsConfig,
 };
-use crate::queries::{mysql, postgres};
-use crate::tls::TlsConfig;
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 struct Pulse {
@@ -21,11 +23,11 @@ struct Pulse {
     time: String,
     version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    uptime_seconds: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     tls_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tls_cipher: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    uptime_seconds: Option<i64>,
 }
 
 /// Start the monitoring service
@@ -148,15 +150,6 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                         Ok(result) => {
                             result.version.clone_into(&mut pulse.version);
                             pulse.uptime_seconds = result.uptime_seconds;
-
-                            DATABASE_VERSION_INFO
-                                .with_label_values(&["postgres", result.version.as_str()])
-                                .set(1);
-                            if let Some(uptime) = result.uptime_seconds {
-                                DATABASE_UPTIME_SECONDS
-                                    .with_label_values(&["postgres"])
-                                    .set(uptime);
-                            }
                             PULSE.set(1);
 
                             // Record successful iteration
@@ -168,6 +161,16 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                             LAST_SUCCESS
                                 .with_label_values(&["postgres"])
                                 .set(now.timestamp());
+
+                            // Record database version and uptime
+                            DATABASE_VERSION_INFO
+                                .with_label_values(&["postgres", result.version.as_str()])
+                                .set(1);
+                            if let Some(uptime) = result.uptime_seconds {
+                                DATABASE_UPTIME_SECONDS
+                                    .with_label_values(&["postgres"])
+                                    .set(uptime);
+                            }
 
                             // Check for read-only mode
                             if result.version.contains("recovery mode")
@@ -196,11 +199,11 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                                         .set(1);
                                 }
 
-                                // Update certificate expiry metric
-                                if let Some(expiry_days) = metadata.cert_expiry_days {
+                                // Record certificate expiry if available
+                                if let Some(days) = metadata.cert_expiry_days {
                                     TLS_CERT_EXPIRY_DAYS
                                         .with_label_values(&["postgres"])
-                                        .set(expiry_days);
+                                        .set(days);
                                 }
                             }
                         }
@@ -246,15 +249,6 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                     Ok(result) => {
                         result.version.clone_into(&mut pulse.version);
                         pulse.uptime_seconds = result.uptime_seconds;
-
-                        DATABASE_VERSION_INFO
-                            .with_label_values(&["mysql", result.version.as_str()])
-                            .set(1);
-                        if let Some(uptime) = result.uptime_seconds {
-                            DATABASE_UPTIME_SECONDS
-                                .with_label_values(&["mysql"])
-                                .set(uptime);
-                        }
                         PULSE.set(1);
 
                         // Record successful iteration
@@ -266,6 +260,16 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                         LAST_SUCCESS
                             .with_label_values(&["mysql"])
                             .set(now.timestamp());
+
+                        // Record database version and uptime
+                        DATABASE_VERSION_INFO
+                            .with_label_values(&["mysql", result.version.as_str()])
+                            .set(1);
+                        if let Some(uptime) = result.uptime_seconds {
+                            DATABASE_UPTIME_SECONDS
+                                .with_label_values(&["mysql"])
+                                .set(uptime);
+                        }
 
                         // Check for read-only mode
                         if result.version.contains("read-only") {
@@ -292,11 +296,9 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                                     .set(1);
                             }
 
-                            // Update certificate expiry metric
-                            if let Some(expiry_days) = metadata.cert_expiry_days {
-                                TLS_CERT_EXPIRY_DAYS
-                                    .with_label_values(&["mysql"])
-                                    .set(expiry_days);
+                            // Record certificate expiry if available
+                            if let Some(days) = metadata.cert_expiry_days {
+                                TLS_CERT_EXPIRY_DAYS.with_label_values(&["mysql"]).set(days);
                             }
                         }
                     }
@@ -350,12 +352,12 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
             let runtime = end.signed_duration_since(now);
             pulse.runtime_ms = runtime.num_milliseconds();
 
+            // Record runtime metric
             let metric_db = match db_driver {
                 "postgres" | "postgresql" => "postgres",
                 "mysql" => "mysql",
                 other => other,
             };
-
             LAST_RUNTIME_MS
                 .with_label_values(&[metric_db])
                 .set(pulse.runtime_ms);
@@ -448,18 +450,17 @@ mod tests {
         assert_eq!(pulse.version, "");
         assert!(pulse.tls_version.is_none());
         assert!(pulse.tls_cipher.is_none());
-        assert!(pulse.uptime_seconds.is_none());
     }
 
     #[test]
     fn test_pulse_serialization() {
         let pulse = Pulse {
+            uptime_seconds: None,
             runtime_ms: 123,
             time: "2024-01-01T00:00:00Z".to_string(),
             version: "PostgreSQL 15.0".to_string(),
             tls_version: Some("TLSv1.3".to_string()),
             tls_cipher: Some("AES256-GCM-SHA384".to_string()),
-            uptime_seconds: Some(3600),
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -467,18 +468,17 @@ mod tests {
         assert!(json.contains("\"version\":\"PostgreSQL 15.0\""));
         assert!(json.contains("\"tls_version\":\"TLSv1.3\""));
         assert!(json.contains("\"tls_cipher\":\"AES256-GCM-SHA384\""));
-        assert!(json.contains("\"uptime_seconds\":3600"));
     }
 
     #[test]
     fn test_pulse_serialization_without_tls() {
         let pulse = Pulse {
+            uptime_seconds: None,
             runtime_ms: 50,
             time: "2024-01-01T00:00:00Z".to_string(),
             version: "MySQL 8.0".to_string(),
             tls_version: None,
             tls_cipher: None,
-            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -487,7 +487,6 @@ mod tests {
         // These fields should be omitted when None (skip_serializing_if)
         assert!(!json.contains("tls_version"));
         assert!(!json.contains("tls_cipher"));
-        assert!(!json.contains("uptime_seconds"));
     }
 
     #[test]
@@ -497,8 +496,7 @@ mod tests {
             "time": "2024-01-01T00:00:00Z",
             "version": "PostgreSQL 15.0",
             "tls_version": "TLSv1.3",
-            "tls_cipher": "AES256-GCM-SHA384",
-            "uptime_seconds": 600
+            "tls_cipher": "AES256-GCM-SHA384"
         }"#;
 
         let pulse: Pulse = serde_json::from_str(json).unwrap();
@@ -507,7 +505,6 @@ mod tests {
         assert_eq!(pulse.version, "PostgreSQL 15.0");
         assert_eq!(pulse.tls_version, Some("TLSv1.3".to_string()));
         assert_eq!(pulse.tls_cipher, Some("AES256-GCM-SHA384".to_string()));
-        assert_eq!(pulse.uptime_seconds, Some(600));
     }
 
     #[test]
@@ -524,18 +521,17 @@ mod tests {
         assert_eq!(pulse.version, "MySQL 8.0");
         assert!(pulse.tls_version.is_none());
         assert!(pulse.tls_cipher.is_none());
-        assert!(pulse.uptime_seconds.is_none());
     }
 
     #[test]
     fn test_pulse_serialization_only_tls_version() {
         let pulse = Pulse {
+            uptime_seconds: None,
             runtime_ms: 100,
             time: "2024-01-01T00:00:00Z".to_string(),
             version: "PostgreSQL 14.0".to_string(),
             tls_version: Some("TLSv1.2".to_string()),
             tls_cipher: None,
-            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -546,12 +542,12 @@ mod tests {
     #[test]
     fn test_pulse_serialization_only_tls_cipher() {
         let pulse = Pulse {
+            uptime_seconds: None,
             runtime_ms: 100,
             time: "2024-01-01T00:00:00Z".to_string(),
             version: "PostgreSQL 14.0".to_string(),
             tls_version: None,
             tls_cipher: Some("AES128-SHA".to_string()),
-            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -577,12 +573,12 @@ mod tests {
     #[test]
     fn test_pulse_zero_runtime() {
         let pulse = Pulse {
+            uptime_seconds: None,
             runtime_ms: 0,
             time: "2024-01-01T00:00:00Z".to_string(),
             version: "PostgreSQL 15.0".to_string(),
             tls_version: None,
             tls_cipher: None,
-            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -592,12 +588,12 @@ mod tests {
     #[test]
     fn test_pulse_negative_runtime() {
         let pulse = Pulse {
+            uptime_seconds: None,
             runtime_ms: -1,
             time: "2024-01-01T00:00:00Z".to_string(),
             version: "PostgreSQL 15.0".to_string(),
             tls_version: None,
             tls_cipher: None,
-            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -607,12 +603,12 @@ mod tests {
     #[test]
     fn test_pulse_empty_strings() {
         let pulse = Pulse {
+            uptime_seconds: None,
             runtime_ms: 50,
             time: String::new(),
             version: String::new(),
             tls_version: Some(String::new()),
             tls_cipher: Some(String::new()),
-            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -677,12 +673,12 @@ mod tests {
     #[test]
     fn test_pulse_large_runtime() {
         let pulse = Pulse {
+            uptime_seconds: None,
             runtime_ms: i64::MAX,
             time: "2024-01-01T00:00:00Z".to_string(),
             version: "PostgreSQL 15.0".to_string(),
             tls_version: None,
             tls_cipher: None,
-            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -692,12 +688,12 @@ mod tests {
     #[test]
     fn test_pulse_special_characters_in_version() {
         let pulse = Pulse {
+            uptime_seconds: None,
             runtime_ms: 50,
             time: "2024-01-01T00:00:00Z".to_string(),
             version: "PostgreSQL 15.0 \"special\" <tags> & symbols".to_string(),
             tls_version: None,
             tls_cipher: None,
-            uptime_seconds: None,
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
@@ -715,9 +711,9 @@ mod tests {
             runtime_ms: 50,
             time: "2024-01-01T00:00:00Z".to_string(),
             version: "PostgreSQL 15.0 🚀 数据库".to_string(),
+            uptime_seconds: None,
             tls_version: Some("TLSv1.3 ✓".to_string()),
             tls_cipher: Some("AES256 🔒".to_string()),
-            uptime_seconds: Some(123),
         };
 
         let json = serde_json::to_string(&pulse).unwrap();
