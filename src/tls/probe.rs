@@ -1,10 +1,4 @@
-use std::{
-    io::Cursor,
-    net::IpAddr,
-    path::Path,
-    sync::{Arc, OnceLock},
-};
-
+use super::{TlsConfig, TlsMetadata};
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use dsn::DSN;
@@ -14,6 +8,12 @@ use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime},
 };
 use rustls_pemfile::{certs, private_key};
+use std::{
+    io::Cursor,
+    net::IpAddr,
+    path::Path,
+    sync::{Arc, OnceLock},
+};
 use tokio::{
     fs,
     io::{AsyncReadExt, AsyncWriteExt},
@@ -21,8 +21,6 @@ use tokio::{
 };
 use tokio_rustls::{TlsConnector, client::TlsStream};
 use x509_parser::prelude::{FromDer, X509Certificate};
-
-use super::{TlsConfig, TlsMetadata};
 
 // PostgreSQL SSL handshake constants
 const POSTGRES_SSL_REQUEST_CODE: i32 = 80_877_103;

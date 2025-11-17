@@ -1,15 +1,3 @@
-use std::time::Instant;
-
-use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, Utc, prelude::*};
-use dsn::DSN;
-use rand::Rng;
-use sqlx::{
-    ConnectOptions, Connection, Row,
-    postgres::{PgConnectOptions, PgDatabaseError, PgSslMode},
-};
-use uuid::Uuid;
-
 use super::HealthCheckResult;
 use crate::{
     metrics::{
@@ -22,6 +10,16 @@ use crate::{
         probe_certificate_expiry,
     },
 };
+use anyhow::{Context, Result, anyhow};
+use chrono::{DateTime, Utc, prelude::*};
+use dsn::DSN;
+use rand::Rng;
+use sqlx::{
+    ConnectOptions, Connection, Row,
+    postgres::{PgConnectOptions, PgDatabaseError, PgSslMode},
+};
+use std::time::Instant;
+use uuid::Uuid;
 
 /// Test read/write operations on the default table
 ///

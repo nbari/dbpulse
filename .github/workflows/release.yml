@@ -78,12 +78,12 @@ jobs:
       # Build for Linux amd64 (musl)
       - name: Build Linux amd64 (musl)
         if: matrix.build == 'linux-amd64'
-        run: cargo build --release --locked --target ${{ matrix.target }} --features musl
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       # Build for Linux arm64 (musl) using cross
       - name: Build Linux arm64 (musl) with cross
         if: matrix.build == 'linux-arm64'
-        run: cross build --release --locked --target ${{ matrix.target }} --features musl
+        run: cross build --release --locked --target ${{ matrix.target }}
 
       # Strip once and prep paths for both packagers
       - name: Strip and prepare packaging paths (Linux)

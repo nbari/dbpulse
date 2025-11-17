@@ -1,17 +1,15 @@
+use super::{
+    TlsConfig, TlsMetadata,
+    probe::{TlsProbeProtocol, probe_certificate_expiry},
+};
+use anyhow::Result;
+use dsn::DSN;
 use std::{
     collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
-
-use anyhow::Result;
-use dsn::DSN;
 use tokio::sync::RwLock;
-
-use super::{
-    TlsConfig, TlsMetadata,
-    probe::{TlsProbeProtocol, probe_certificate_expiry},
-};
 
 /// Certificate metadata cache with TTL
 pub struct CertCache {
