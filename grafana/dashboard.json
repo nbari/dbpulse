@@ -169,7 +169,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_pulse",
+          "expr": "dbpulse_pulse{job=\"$job\"}",
           "refId": "A"
         }
       ],
@@ -251,7 +251,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_database_readonly",
+          "expr": "dbpulse_database_readonly{job=\"$job\"}",
           "legendFormat": "{{database}}",
           "refId": "A"
         }
@@ -324,7 +324,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_database_version_info",
+          "expr": "dbpulse_database_version_info{job=\"$job\"}",
           "legendFormat": "{{database}} \u2022 {{version}}",
           "refId": "A"
         }
@@ -396,7 +396,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_database_uptime_seconds",
+          "expr": "dbpulse_database_uptime_seconds{job=\"$job\"}",
           "legendFormat": "{{database}}",
           "refId": "A"
         }
@@ -468,7 +468,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "time() - dbpulse_last_success_timestamp_seconds",
+          "expr": "time() - dbpulse_last_success_timestamp_seconds{job=\"$job\"}",
           "legendFormat": "{{database}}",
           "refId": "A"
         }
@@ -536,7 +536,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_connections_active",
+          "expr": "dbpulse_connections_active{job=\"$job\"}",
           "refId": "A"
         }
       ],
@@ -607,7 +607,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_blocking_queries",
+          "expr": "dbpulse_blocking_queries{job=\"$job\"}",
           "legendFormat": "{{database}}",
           "refId": "A"
         }
@@ -679,7 +679,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_errors_total[5m])",
+          "expr": "rate(dbpulse_errors_total{job=\"$job\"}[5m])",
           "legendFormat": "{{database}}",
           "refId": "A"
         }
@@ -790,7 +790,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_runtime_sum[5m]) / rate(dbpulse_runtime_count[5m])",
+          "expr": "rate(dbpulse_runtime_sum{job=\"$job\"}[5m]) / rate(dbpulse_runtime_count{job=\"$job\"}[5m])",
           "legendFormat": "Average",
           "refId": "A"
         },
@@ -799,7 +799,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.99, rate(dbpulse_runtime_bucket[5m]))",
+          "expr": "histogram_quantile(0.99, rate(dbpulse_runtime_bucket{job=\"$job\"}[5m]))",
           "legendFormat": "P99",
           "refId": "B"
         },
@@ -808,7 +808,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.95, rate(dbpulse_runtime_bucket[5m]))",
+          "expr": "histogram_quantile(0.95, rate(dbpulse_runtime_bucket{job=\"$job\"}[5m]))",
           "legendFormat": "P95",
           "refId": "C"
         },
@@ -817,7 +817,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.50, rate(dbpulse_runtime_bucket[5m]))",
+          "expr": "histogram_quantile(0.50, rate(dbpulse_runtime_bucket{job=\"$job\"}[5m]))",
           "legendFormat": "P50 (Median)",
           "refId": "D"
         }
@@ -915,7 +915,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_operation_duration_seconds_sum[5m]) / rate(dbpulse_operation_duration_seconds_count[5m])",
+          "expr": "rate(dbpulse_operation_duration_seconds_sum{job=\"$job\"}[5m]) / rate(dbpulse_operation_duration_seconds_count{job=\"$job\"}[5m])",
           "legendFormat": "{{database}} - {{operation}}",
           "refId": "A"
         }
@@ -1034,7 +1034,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_connection_duration_seconds_sum[5m]) / rate(dbpulse_connection_duration_seconds_count[5m])",
+          "expr": "rate(dbpulse_connection_duration_seconds_sum{job=\"$job\"}[5m]) / rate(dbpulse_connection_duration_seconds_count{job=\"$job\"}[5m])",
           "legendFormat": "Average Connection Duration",
           "refId": "A"
         },
@@ -1043,7 +1043,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.99, rate(dbpulse_connection_duration_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.99, rate(dbpulse_connection_duration_seconds_bucket{job=\"$job\"}[5m]))",
           "legendFormat": "P99 Connection Duration",
           "refId": "B"
         }
@@ -1141,7 +1141,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_rows_affected_total{operation=\"insert\"}[5m])",
+          "expr": "rate(dbpulse_rows_affected_total{job=\"$job\", operation=\"insert\"}[5m])",
           "legendFormat": "{{database}} - Inserts",
           "refId": "A"
         },
@@ -1150,7 +1150,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_rows_affected_total{operation=\"delete\"}[5m])",
+          "expr": "rate(dbpulse_rows_affected_total{job=\"$job\", operation=\"delete\"}[5m])",
           "legendFormat": "{{database}} - Deletes",
           "refId": "B"
         }
@@ -1255,7 +1255,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_table_size_bytes / 1024 / 1024",
+          "expr": "dbpulse_table_size_bytes{job=\"$job\"} / 1024 / 1024",
           "legendFormat": "{{database}} - {{table}}",
           "refId": "A"
         }
@@ -1360,7 +1360,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (database, table) (dbpulse_table_rows)",
+          "expr": "sum by (database, table) (dbpulse_table_rows{job=\"$job\"})",
           "legendFormat": "{{database}} - {{table}}",
           "refId": "A"
         }
@@ -1467,7 +1467,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_replication_lag_seconds_sum[5m]) / rate(dbpulse_replication_lag_seconds_count[5m])",
+          "expr": "rate(dbpulse_replication_lag_seconds_sum{job=\"$job\"}[5m]) / rate(dbpulse_replication_lag_seconds_count{job=\"$job\"}[5m])",
           "legendFormat": "{{database}} - Average",
           "refId": "A"
         },
@@ -1476,7 +1476,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.99, rate(dbpulse_replication_lag_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.99, rate(dbpulse_replication_lag_seconds_bucket{job=\"$job\"}[5m]))",
           "legendFormat": "{{database}} - P99",
           "refId": "B"
         }
@@ -1548,7 +1548,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_blocking_queries",
+          "expr": "dbpulse_blocking_queries{job=\"$job\"}",
           "legendFormat": "{{database}}",
           "refId": "A"
         }
@@ -1620,7 +1620,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(dbpulse_iterations_total{status=\"success\"}[5m])) / sum(rate(dbpulse_iterations_total[5m])) * 100",
+          "expr": "sum(rate(dbpulse_iterations_total{job=\"$job\", status=\"success\"}[5m])) / sum(rate(dbpulse_iterations_total{job=\"$job\"}[5m])) * 100",
           "refId": "A"
         }
       ],
@@ -1775,7 +1775,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_pulse",
+          "expr": "dbpulse_pulse{job=\"$job\"}",
           "legendFormat": "Pulse",
           "refId": "A"
         },
@@ -1784,7 +1784,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_runtime_last_milliseconds",
+          "expr": "dbpulse_runtime_last_milliseconds{job=\"$job\"}",
           "legendFormat": "Runtime (ms)",
           "refId": "B"
         }
@@ -1856,7 +1856,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_database_size_bytes",
+          "expr": "dbpulse_database_size_bytes{job=\"$job\"}",
           "legendFormat": "{{database}}",
           "refId": "A"
         }
@@ -1968,7 +1968,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_tls_handshake_duration_seconds_sum[5m]) / rate(dbpulse_tls_handshake_duration_seconds_count[5m])",
+          "expr": "rate(dbpulse_tls_handshake_duration_seconds_sum{job=\"$job\"}[5m]) / rate(dbpulse_tls_handshake_duration_seconds_count{job=\"$job\"}[5m])",
           "legendFormat": "{{database}} - Average",
           "refId": "A"
         },
@@ -1977,7 +1977,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.99, rate(dbpulse_tls_handshake_duration_seconds_bucket[5m]))",
+          "expr": "histogram_quantile(0.99, rate(dbpulse_tls_handshake_duration_seconds_bucket{job=\"$job\"}[5m]))",
           "legendFormat": "{{database}} - P99",
           "refId": "B"
         }
@@ -2079,7 +2079,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_tls_connection_errors_total[5m])",
+          "expr": "rate(dbpulse_tls_connection_errors_total{job=\"$job\"}[5m])",
           "legendFormat": "{{database}} - {{error_type}}",
           "refId": "A"
         }
@@ -2153,7 +2153,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_tls_info",
+          "expr": "dbpulse_tls_info{job=\"$job\"}",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -2255,7 +2255,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_tls_cert_expiry_days",
+          "expr": "dbpulse_tls_cert_expiry_days{job=\"$job\"}",
           "legendFormat": "{{database}}",
           "refId": "A"
         }
@@ -2358,7 +2358,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_tls_cert_expiry_days",
+          "expr": "dbpulse_tls_cert_expiry_days{job=\"$job\"}",
           "legendFormat": "{{database}}",
           "refId": "A"
         }
@@ -2472,7 +2472,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_errors_total[5m])",
+          "expr": "rate(dbpulse_errors_total{job=\"$job\"}[5m])",
           "legendFormat": "{{database}} - {{error_type}}",
           "refId": "A"
         }
@@ -2569,7 +2569,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_iterations_total{status=\"success\"}[5m])",
+          "expr": "rate(dbpulse_iterations_total{job=\"$job\", status=\"success\"}[5m])",
           "legendFormat": "{{database}} - Success",
           "refId": "A"
         },
@@ -2578,7 +2578,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_iterations_total{status=\"error\"}[5m])",
+          "expr": "rate(dbpulse_iterations_total{job=\"$job\", status=\"error\"}[5m])",
           "legendFormat": "{{database}} - Error",
           "refId": "B"
         }
@@ -2679,7 +2679,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_panics_recovered_total",
+          "expr": "dbpulse_panics_recovered_total{job=\"$job\"}",
           "legendFormat": "Panics Recovered",
           "refId": "A"
         }
@@ -2751,7 +2751,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (error_type) (dbpulse_errors_total)",
+          "expr": "sum by (error_type) (dbpulse_errors_total{job=\"$job\"})",
           "legendFormat": "{{error_type}}",
           "refId": "A"
         }
@@ -2786,6 +2786,33 @@
         "refresh": 1,
         "regex": "",
         "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "definition": "label_values(dbpulse_pulse,job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Job",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": {
+          "query": "label_values(dbpulse_pulse,job)",
+          "refId": "job-variable"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
       }
     ]
   },
