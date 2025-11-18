@@ -3,6 +3,7 @@ mod common;
 use chrono::Utc;
 use common::*;
 use dbpulse::queries::postgres;
+use dbpulse::tls::cache::CertCache;
 use dbpulse::tls::{TlsConfig, TlsMode};
 
 #[tokio::test]
@@ -16,8 +17,9 @@ async fn test_postgres_basic_connection() {
     let now = Utc::now();
     let tls = TlsConfig::default();
     let table_name = test_table_name("test_postgres_basic_connection");
+    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
 
-    let result = postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = postgres::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
     assert!(
         result.is_ok(),
         "Failed to connect to PostgreSQL: {result:?}"
@@ -41,11 +43,13 @@ async fn test_postgres_read_write_operations() {
     let dsn = parse_dsn(POSTGRES_DSN);
     let now = Utc::now();
     let tls = TlsConfig::default();
+    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
 
     // Run test multiple times to ensure cleanup works
     for i in 0..5 {
         let table_name = test_table_name(&format!("test_postgres_read_write_operations_{i}"));
-        let result = postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+        let result =
+            postgres::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
         let health = result.unwrap_or_else(|e| panic!("Iteration {i} failed: {e:?}"));
         assert_version_and_uptime("PostgreSQL", &health);
     }
@@ -62,9 +66,10 @@ async fn test_postgres_transaction_rollback() {
     let now = Utc::now();
     let tls = TlsConfig::default();
     let table_name = test_table_name("test_postgres_transaction_rollback");
+    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
 
     // This tests that transaction rollback works correctly
-    let result = postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = postgres::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
     let health = result.unwrap_or_else(|e| panic!("Transaction test failed: {e:?}"));
     assert_version_and_uptime("PostgreSQL", &health);
 }
@@ -85,7 +90,8 @@ async fn test_postgres_concurrent_connections() {
             let dsn = parse_dsn(POSTGRES_DSN);
             let tls = TlsConfig::default();
             let now = Utc::now();
-            postgres::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await
+            let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+            postgres::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await
         });
         handles.push(handle);
     }
@@ -110,11 +116,13 @@ async fn test_postgres_with_different_ranges() {
     let dsn = parse_dsn(POSTGRES_DSN);
     let now = Utc::now();
     let tls = TlsConfig::default();
+    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
 
     // Test different range values
     for range in [10, 50, 100, 500, 1000] {
         let table_name = test_table_name(&format!("test_postgres_with_different_ranges_{range}"));
-        let result = postgres::test_rw_with_table(&dsn, now, range, &tls, &table_name).await;
+        let result =
+            postgres::test_rw_with_table(&dsn, now, range, &tls, &cert_cache, &table_name).await;
         let health = result.unwrap_or_else(|e| panic!("Range {range} failed: {e:?}"));
         assert_version_and_uptime("PostgreSQL", &health);
     }

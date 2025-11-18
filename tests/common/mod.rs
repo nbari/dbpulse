@@ -2,7 +2,7 @@
 
 use chrono::Utc;
 use dbpulse::queries::{HealthCheckResult, mysql, postgres};
-use dbpulse::tls::{TlsConfig, TlsMode};
+use dbpulse::tls::{TlsConfig, TlsMode, cache::CertCache};
 use dsn::DSN;
 use std::env;
 
@@ -17,6 +17,12 @@ pub fn skip_if_no_mariadb() -> bool {
     env::var("SKIP_MARIADB_TESTS").is_ok()
 }
 
+/// Create a test certificate cache with a long TTL (5 minutes)
+/// This allows tests to reuse certificate data and reduces test time
+pub fn test_cert_cache() -> CertCache {
+    CertCache::new(std::time::Duration::from_secs(300))
+}
+
 pub async fn test_postgres_connection(dsn_str: &str) -> anyhow::Result<HealthCheckResult> {
     test_postgres_connection_with_table(dsn_str, "dbpulse_rw").await
 }
@@ -28,7 +34,8 @@ pub async fn test_postgres_connection_with_table(
     let dsn = dsn::parse(dsn_str)?;
     let now = Utc::now();
     let tls = TlsConfig::default();
-    postgres::test_rw_with_table(&dsn, now, 100, &tls, table_name).await
+    let cert_cache = test_cert_cache();
+    postgres::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, table_name).await
 }
 
 pub async fn test_mariadb_connection(dsn_str: &str) -> anyhow::Result<HealthCheckResult> {
@@ -42,7 +49,8 @@ pub async fn test_mariadb_connection_with_table(
     let dsn = dsn::parse(dsn_str)?;
     let now = Utc::now();
     let tls = TlsConfig::default();
-    mysql::test_rw_with_table(&dsn, now, 100, &tls, table_name).await
+    let cert_cache = test_cert_cache();
+    mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, table_name).await
 }
 
 pub async fn test_postgres_with_tls(
@@ -65,7 +73,8 @@ pub async fn test_postgres_with_tls_and_table(
         cert: None,
         key: None,
     };
-    postgres::test_rw_with_table(&dsn, now, 100, &tls, table_name).await
+    let cert_cache = test_cert_cache();
+    postgres::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, table_name).await
 }
 
 pub async fn test_mariadb_with_tls(
@@ -88,7 +97,8 @@ pub async fn test_mariadb_with_tls_and_table(
         cert: None,
         key: None,
     };
-    mysql::test_rw_with_table(&dsn, now, 100, &tls, table_name).await
+    let cert_cache = test_cert_cache();
+    mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, table_name).await
 }
 
 pub fn parse_dsn(dsn_str: &str) -> DSN {

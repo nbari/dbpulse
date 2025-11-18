@@ -6,8 +6,9 @@ use crate::{
         TLS_CERT_PROBE_ERRORS, TLS_HANDSHAKE_DURATION,
     },
     tls::{
-        TlsConfig, TlsMetadata, TlsMode, TlsProbeProtocol, ensure_crypto_provider,
-        probe_certificate_expiry,
+        TlsConfig, TlsMetadata, TlsMode, TlsProbeProtocol,
+        cache::{CertCache, get_cert_metadata_cached},
+        ensure_crypto_provider,
     },
 };
 use anyhow::{Context, Result, anyhow};
@@ -31,8 +32,9 @@ pub async fn test_rw(
     now: DateTime<Utc>,
     range: u32,
     tls: &TlsConfig,
+    cert_cache: &CertCache,
 ) -> Result<HealthCheckResult> {
-    test_rw_with_table(dsn, now, range, tls, "dbpulse_rw").await
+    test_rw_with_table(dsn, now, range, tls, cert_cache, "dbpulse_rw").await
 }
 
 /// Test read/write operations on a specified table
@@ -46,6 +48,7 @@ pub async fn test_rw_with_table(
     now: DateTime<Utc>,
     range: u32,
     tls: &TlsConfig,
+    cert_cache: &CertCache,
     table_name: &str,
 ) -> Result<HealthCheckResult> {
     ensure_crypto_provider();
@@ -194,7 +197,9 @@ pub async fn test_rw_with_table(
         }
 
         let tls_metadata = if tls.mode.is_enabled() {
-            extract_tls_metadata(dsn, tls, &mut conn).await.ok()
+            extract_tls_metadata(dsn, tls, &mut conn, cert_cache)
+                .await
+                .ok()
         } else {
             None
         };
@@ -211,7 +216,9 @@ pub async fn test_rw_with_table(
     // Check if transaction is read-only (even if not in recovery)
     if tx_read_only.0.to_lowercase() == "on" {
         let tls_metadata = if tls.mode.is_enabled() {
-            extract_tls_metadata(dsn, tls, &mut conn).await.ok()
+            extract_tls_metadata(dsn, tls, &mut conn, cert_cache)
+                .await
+                .ok()
         } else {
             None
         };
@@ -469,7 +476,9 @@ pub async fn test_rw_with_table(
 
     // Extract TLS metadata if TLS is enabled
     let tls_metadata = if tls.mode.is_enabled() {
-        extract_tls_metadata(dsn, tls, &mut conn).await.ok()
+        extract_tls_metadata(dsn, tls, &mut conn, cert_cache)
+            .await
+            .ok()
     } else {
         None
     };
@@ -491,6 +500,7 @@ async fn extract_tls_metadata(
     dsn: &DSN,
     tls: &TlsConfig,
     conn: &mut sqlx::PgConnection,
+    cert_cache: &CertCache,
 ) -> Result<TlsMetadata> {
     // Query pg_stat_ssl for TLS information
     let row = sqlx::query("SELECT version, cipher FROM pg_stat_ssl WHERE pid = pg_backend_pid()")
@@ -509,7 +519,8 @@ async fn extract_tls_metadata(
     });
 
     if tls.mode.is_enabled() {
-        match probe_certificate_expiry(dsn, 5432, TlsProbeProtocol::Postgres, tls).await {
+        match get_cert_metadata_cached(dsn, 5432, TlsProbeProtocol::Postgres, tls, cert_cache).await
+        {
             Ok(Some(probe_metadata)) => {
                 // Merge probe metadata (subject, issuer, expiry) with connection metadata (version, cipher)
                 metadata.cert_subject = probe_metadata.cert_subject;

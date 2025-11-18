@@ -125,4 +125,155 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(150)).await;
         assert!(cache.get("test").await.is_none());
     }
+
+    #[tokio::test]
+    async fn test_cache_multiple_entries() {
+        let cache = CertCache::new(Duration::from_secs(300));
+
+        let metadata1 = TlsMetadata {
+            cert_subject: Some("CN=server1".to_string()),
+            cert_expiry_days: Some(30),
+            ..Default::default()
+        };
+
+        let metadata2 = TlsMetadata {
+            cert_subject: Some("CN=server2".to_string()),
+            cert_expiry_days: Some(60),
+            ..Default::default()
+        };
+
+        cache
+            .set("server1:5432".to_string(), metadata1.clone())
+            .await;
+        cache
+            .set("server2:3306".to_string(), metadata2.clone())
+            .await;
+
+        let retrieved1 = cache.get("server1:5432").await;
+        let retrieved2 = cache.get("server2:3306").await;
+
+        assert!(retrieved1.is_some());
+        assert!(retrieved2.is_some());
+        assert_eq!(retrieved1.unwrap().cert_subject, metadata1.cert_subject);
+        assert_eq!(retrieved2.unwrap().cert_subject, metadata2.cert_subject);
+    }
+
+    #[tokio::test]
+    async fn test_cache_cleanup() {
+        let cache = CertCache::new(Duration::from_millis(100));
+
+        let metadata = TlsMetadata {
+            cert_subject: Some("CN=test".to_string()),
+            ..Default::default()
+        };
+
+        cache.set("test1".to_string(), metadata.clone()).await;
+        cache.set("test2".to_string(), metadata.clone()).await;
+
+        // Wait for expiry
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // Add a fresh entry
+        cache.set("test3".to_string(), metadata).await;
+
+        // Cleanup should remove expired entries
+        cache.cleanup().await;
+
+        assert!(cache.get("test1").await.is_none());
+        assert!(cache.get("test2").await.is_none());
+        assert!(cache.get("test3").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_cache_overwrite() {
+        let cache = CertCache::new(Duration::from_secs(300));
+
+        let metadata1 = TlsMetadata {
+            cert_subject: Some("CN=old".to_string()),
+            cert_expiry_days: Some(10),
+            ..Default::default()
+        };
+
+        let metadata2 = TlsMetadata {
+            cert_subject: Some("CN=new".to_string()),
+            cert_expiry_days: Some(90),
+            ..Default::default()
+        };
+
+        cache.set("test".to_string(), metadata1).await;
+        cache.set("test".to_string(), metadata2.clone()).await;
+
+        let retrieved = cache.get("test").await;
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().cert_subject, metadata2.cert_subject);
+    }
+
+    #[tokio::test]
+    async fn test_cache_concurrent_access() {
+        use std::sync::Arc;
+
+        let cache = Arc::new(CertCache::new(Duration::from_secs(300)));
+        let metadata = TlsMetadata {
+            cert_subject: Some("CN=concurrent".to_string()),
+            ..Default::default()
+        };
+
+        // Spawn multiple concurrent writes
+        let mut handles = vec![];
+        for i in 0..10 {
+            let cache_clone = cache.clone();
+            let metadata_clone = metadata.clone();
+            let handle = tokio::spawn(async move {
+                cache_clone.set(format!("key{i}"), metadata_clone).await;
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all writes to complete
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        // Verify all entries exist
+        for i in 0..10 {
+            assert!(cache.get(&format!("key{i}")).await.is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cache_zero_ttl() {
+        let cache = CertCache::new(Duration::from_secs(0));
+        let metadata = TlsMetadata {
+            cert_subject: Some("CN=test".to_string()),
+            ..Default::default()
+        };
+
+        cache.set("test".to_string(), metadata).await;
+
+        // With zero TTL, entry should expire immediately
+        assert!(cache.get("test").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cache_full_metadata() {
+        let cache = CertCache::new(Duration::from_secs(300));
+        let metadata = TlsMetadata {
+            version: Some("TLSv1.3".to_string()),
+            cipher: Some("TLS_AES_256_GCM_SHA384".to_string()),
+            cert_subject: Some("CN=test.example.com,O=Test Org".to_string()),
+            cert_issuer: Some("CN=Test CA,O=Test Org".to_string()),
+            cert_expiry_days: Some(90),
+        };
+
+        cache.set("test".to_string(), metadata.clone()).await;
+        let retrieved = cache.get("test").await;
+
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.version, metadata.version);
+        assert_eq!(retrieved.cipher, metadata.cipher);
+        assert_eq!(retrieved.cert_subject, metadata.cert_subject);
+        assert_eq!(retrieved.cert_issuer, metadata.cert_issuer);
+        assert_eq!(retrieved.cert_expiry_days, metadata.cert_expiry_days);
+    }
 }

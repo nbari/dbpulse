@@ -17,6 +17,7 @@ mod common;
 use chrono::Utc;
 use common::*;
 use dbpulse::queries::mysql;
+use dbpulse::tls::cache::CertCache;
 use dbpulse::tls::{TlsConfig, TlsMode};
 use std::env;
 use std::path::PathBuf;
@@ -55,9 +56,10 @@ async fn test_tls_disable() {
         cert: None,
         key: None,
     };
+    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
 
     let table_name = test_table_name("test_mariadb_tls_disable");
-    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
 
     assert!(result.is_ok(), "TLS Disable failed: {result:?}");
 
@@ -85,9 +87,10 @@ async fn test_tls_require() {
         cert: None,
         key: None,
     };
+    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
 
     let table_name = test_table_name("test_mariadb_tls_require");
-    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
 
     assert!(result.is_ok(), "TLS Require failed: {result:?}");
 
@@ -131,9 +134,10 @@ async fn test_tls_verify_ca() {
         cert: None,
         key: None,
     };
+    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
 
     let table_name = test_table_name("test_mariadb_tls_verify_ca");
-    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
 
     assert!(result.is_ok(), "TLS Verify-CA failed: {result:?}");
 
@@ -180,9 +184,10 @@ async fn test_tls_verify_identity() {
         cert: None,
         key: None,
     };
+    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
 
     let table_name = test_table_name("test_mariadb_tls_verify_identity");
-    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
 
     assert!(result.is_ok(), "TLS Verify-Identity failed: {result:?}");
 
@@ -223,11 +228,13 @@ async fn test_tls_multiple_connections() {
         cert: None,
         key: None,
     };
+    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
 
     // Run multiple connections in sequence to verify TLS session reuse
     for i in 0..5 {
         let table_name = test_table_name(&format!("test_mariadb_tls_multi_{i}"));
-        let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+        let result =
+            mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
         assert!(result.is_ok(), "Connection {i} failed: {result:?}");
 
         let health = result.unwrap();
@@ -255,9 +262,10 @@ async fn test_tls_with_wrong_ca_fails() {
         cert: None,
         key: None,
     };
+    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
 
     let table_name = test_table_name("test_mariadb_tls_wrong_ca");
-    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
 
     // This should fail because the CA certificate doesn't exist
     assert!(
@@ -282,9 +290,10 @@ async fn test_tls_connection_info() {
         cert: None,
         key: None,
     };
+    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
 
     let table_name = test_table_name("test_mariadb_tls_connection_info");
-    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
 
     assert!(result.is_ok(), "TLS connection failed: {result:?}");
 
@@ -327,9 +336,10 @@ async fn test_tls_cipher_suite() {
         cert: None,
         key: None,
     };
+    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
 
     let table_name = test_table_name("test_mariadb_tls_cipher");
-    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &table_name).await;
+    let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
 
     assert!(result.is_ok(), "TLS connection failed: {result:?}");
 

@@ -6,8 +6,9 @@ use crate::{
         TLS_CERT_PROBE_ERRORS, TLS_HANDSHAKE_DURATION,
     },
     tls::{
-        TlsConfig, TlsMetadata, TlsMode, TlsProbeProtocol, ensure_crypto_provider,
-        probe_certificate_expiry,
+        TlsConfig, TlsMetadata, TlsMode, TlsProbeProtocol,
+        cache::{CertCache, get_cert_metadata_cached},
+        ensure_crypto_provider,
     },
 };
 use anyhow::{Context, Result, anyhow};
@@ -33,8 +34,9 @@ pub async fn test_rw(
     now: DateTime<Utc>,
     range: u32,
     tls: &TlsConfig,
+    cert_cache: &CertCache,
 ) -> Result<HealthCheckResult> {
-    test_rw_with_table(dsn, now, range, tls, "dbpulse_rw").await
+    test_rw_with_table(dsn, now, range, tls, cert_cache, "dbpulse_rw").await
 }
 
 /// Test read/write operations on a specified table
@@ -48,6 +50,7 @@ pub async fn test_rw_with_table(
     now: DateTime<Utc>,
     range: u32,
     tls: &TlsConfig,
+    cert_cache: &CertCache,
     table_name: &str,
 ) -> Result<HealthCheckResult> {
     ensure_crypto_provider();
@@ -221,7 +224,9 @@ pub async fn test_rw_with_table(
         }
 
         let tls_metadata = if tls.mode.is_enabled() {
-            extract_tls_metadata(dsn, tls, &mut conn).await.ok()
+            extract_tls_metadata(dsn, tls, &mut conn, cert_cache)
+                .await
+                .ok()
         } else {
             None
         };
@@ -448,7 +453,9 @@ pub async fn test_rw_with_table(
 
     // Extract TLS metadata if TLS is enabled
     let tls_metadata = if tls.mode.is_enabled() {
-        extract_tls_metadata(dsn, tls, &mut conn).await.ok()
+        extract_tls_metadata(dsn, tls, &mut conn, cert_cache)
+            .await
+            .ok()
     } else {
         None
     };
@@ -470,13 +477,14 @@ async fn extract_tls_metadata(
     dsn: &DSN,
     tls: &TlsConfig,
     conn: &mut sqlx::MySqlConnection,
+    cert_cache: &CertCache,
 ) -> Result<TlsMetadata> {
     let mut cert_subject: Option<String> = None;
     let mut cert_issuer: Option<String> = None;
     let mut cert_expiry_days: Option<i64> = None;
 
     if tls.mode.is_enabled() {
-        match probe_certificate_expiry(dsn, 3306, TlsProbeProtocol::Mysql, tls).await {
+        match get_cert_metadata_cached(dsn, 3306, TlsProbeProtocol::Mysql, tls, cert_cache).await {
             Ok(Some(probe_metadata)) => {
                 cert_subject = probe_metadata.cert_subject;
                 cert_issuer = probe_metadata.cert_issuer;
