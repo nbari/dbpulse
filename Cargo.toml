@@ -1,6 +1,6 @@
 [package]
 name = "dbpulse"
-version = "0.7.3"
+version = "0.8.0"
 authors = ["Nicolas Embriz <nbari@tequila.io>"]
 description = "command line tool to monitor that database is available for read & write"
 documentation = "https://github.com/nbari/dbpulse/blob/master/README.md"
