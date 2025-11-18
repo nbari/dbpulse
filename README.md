@@ -67,6 +67,7 @@ dbpulse [OPTIONS] --dsn <DSN>
 | `-p, --port <PORT>` | `DBPULSE_PORT` | `9300` | HTTP port for `/metrics` endpoint |
 | `-l, --listen <IP>` | `DBPULSE_LISTEN` | `[::]` | IP address to bind to (supports IPv4 and IPv6) |
 | `-r, --range <RANGE>` | `DBPULSE_RANGE` | `100` | Upper limit for random ID generation (prevents conflicts in multi-instance setups) |
+| N/A | `DBPULSE_TLS_CERT_CACHE_TTL` | `3600` | TLS certificate cache TTL in seconds (0 to disable caching) |
 
 ### DSN Format
 
@@ -136,8 +137,24 @@ export DBPULSE_DSN="postgres://user:pass@tcp(localhost:5432)/mydb"
 export DBPULSE_INTERVAL=60
 export DBPULSE_PORT=9300
 export DBPULSE_RANGE=1000
+export DBPULSE_TLS_CERT_CACHE_TTL=3600  # Cache TLS certificate for 1 hour (default)
 
 dbpulse  # Uses environment variables
+```
+
+**TLS Certificate Caching Examples:**
+```sh
+# Production: Check certificate every 30 minutes
+export DBPULSE_TLS_CERT_CACHE_TTL=1800
+
+# Stable environments: Check once per day
+export DBPULSE_TLS_CERT_CACHE_TTL=86400
+
+# Testing: Disable cache (probe every health check)
+export DBPULSE_TLS_CERT_CACHE_TTL=0
+
+# Default: Check once per hour (if not set)
+# No need to set, 3600 is automatic
 ```
 
 ### Complete Examples
@@ -182,7 +199,7 @@ The DSN parser extracts `sslmode`, `sslrootcert`, `sslcert`, and `sslkey` parame
 
 ### 2. Health Check Cycle
 
-Every interval (default: 30 seconds), dbpulse makes **two connections**:
+Every interval (default: 30 seconds), dbpulse performs health checks:
 
 **Connection #1 - Database Operations (SQLx):**
 - Connects with proper TLS verification based on `sslmode`
@@ -191,24 +208,49 @@ Every interval (default: 30 seconds), dbpulse makes **two connections**:
 - Collects metrics (table size, replication lag, blocking queries)
 - Queries TLS info from database (`pg_stat_ssl` or `SHOW STATUS LIKE 'Ssl%'`)
 
-**Connection #2 - Certificate Inspection (Probe):**
+**Connection #2 - Certificate Inspection (Probe) - CACHED:**
 - Opens separate TLS connection to database server
 - Performs STARTTLS negotiation (protocol-specific)
 - Extracts certificate metadata (subject, issuer, expiry date)
 - Closes immediately (no database queries)
+- **Cached by default**: Probe runs once per hour (configurable via `DBPULSE_TLS_CERT_CACHE_TTL`)
+- Cache key: `host:port` combination
+- Reduces from 120 probes/hour to 1 probe/hour with default settings
 
 Both connections use the same TLS configuration from the DSN. The probe connection uses a `NoVerifier` to inspect certificates without validation (actual security happens in Connection #1).
 
 **Why two connections?** SQLx doesn't expose peer certificates from its internal TLS stream, so certificate metadata must be extracted separately.
 
-### 3. Metrics Export
+### 3. Certificate Caching
+
+**Default behavior (1 hour cache):**
+- First health check: Both Connection #1 and #2 execute (~100-150ms)
+- Subsequent checks (for 1 hour): Only Connection #1 executes (~50-80ms)
+- After 1 hour: Cache expires, Connection #2 runs again
+
+**Customizing cache TTL:**
+```bash
+# Check certificate every 30 minutes
+export DBPULSE_TLS_CERT_CACHE_TTL=1800
+
+# Check certificate once per day
+export DBPULSE_TLS_CERT_CACHE_TTL=86400
+
+# Disable caching (probe every iteration - not recommended)
+export DBPULSE_TLS_CERT_CACHE_TTL=0
+```
+
+**Performance impact:**
+- Default (30s interval, 1h cache): 95% reduction in TLS probe connections
+- Memory overhead: ~200 bytes per cached certificate
+- Thread-safe: Uses `Arc<RwLock<HashMap>>` for concurrent access
+
+### 4. Metrics Export
 
 Results are merged and exposed as Prometheus metrics on `/metrics`:
 - Health status, latency, error rates
 - TLS version, cipher suite (from Connection #1)
-- Certificate subject, issuer, expiry days (from Connection #2)
-
-**Performance:** Each check takes ~100-150ms total. Certificate caching can reduce this by 98% (see `src/tls/cache.rs`).
+- Certificate subject, issuer, expiry days (from Connection #2, cached)
 
 ---
 

@@ -5,14 +5,14 @@ use crate::{
         TLS_CONNECTION_ERRORS, TLS_INFO, encode_metrics,
     },
     queries::{mysql, postgres},
-    tls::TlsConfig,
+    tls::{TlsConfig, cache::CertCache},
 };
 use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
 use chrono::{Duration, Utc, prelude::*};
 use dsn::DSN;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
-use std::net::IpAddr;
+use std::{env::var, net::IpAddr, sync::Arc};
 use tokio::{net::TcpListener, sync::mpsc, task, time};
 
 #[derive(Serialize, Deserialize, Debug, Default)]
@@ -71,11 +71,27 @@ pub async fn start(
         interval
     );
 
+    // Initialize TLS certificate cache with configurable TTL (default: 1 hour)
+    let cert_cache_ttl_secs = var("DBPULSE_TLS_CERT_CACHE_TTL")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(3600); // Default: 1 hour
+    let cert_cache = Arc::new(CertCache::new(std::time::Duration::from_secs(
+        cert_cache_ttl_secs,
+    )));
+
+    println!(
+        "{} - TLS certificate cache TTL: {}s",
+        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        cert_cache_ttl_secs
+    );
+
     // shutdown signal
     let (tx, mut rx) = mpsc::unbounded_channel();
 
     // check db pulse - keep JoinHandle to detect task failures
-    let monitor_handle = task::spawn(async move { run_loop(dsn, interval, range, tls, tx).await });
+    let monitor_handle =
+        task::spawn(async move { run_loop(dsn, interval, range, tls, cert_cache, tx).await });
 
     // Race between normal operation and monitoring task failure
     let server =
@@ -128,7 +144,14 @@ fn is_tls_error(error: &anyhow::Error) -> bool {
 }
 
 #[allow(clippy::too_many_lines)]
-async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::UnboundedSender<()>) {
+async fn run_loop(
+    dsn: DSN,
+    every: u16,
+    range: u32,
+    tls: TlsConfig,
+    cert_cache: Arc<CertCache>,
+    tx: mpsc::UnboundedSender<()>,
+) {
     loop {
         // Catch panics in individual iterations to keep loop alive
         let iteration_result = std::panic::AssertUnwindSafe(async {
@@ -144,7 +167,7 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
             let db_driver = dsn.driver.as_str();
             match db_driver {
                 "postgres" | "postgresql" => {
-                    match postgres::test_rw(&dsn, now, range, &tls).await {
+                    match postgres::test_rw(&dsn, now, range, &tls, &cert_cache).await {
                         Ok(result) => {
                             result.version.clone_into(&mut pulse.version);
                             pulse.uptime_seconds = result.uptime_seconds;
@@ -243,7 +266,7 @@ async fn run_loop(dsn: DSN, every: u16, range: u32, tls: TlsConfig, tx: mpsc::Un
                         }
                     }
                 }
-                "mysql" => match mysql::test_rw(&dsn, now, range, &tls).await {
+                "mysql" => match mysql::test_rw(&dsn, now, range, &tls, &cert_cache).await {
                     Ok(result) => {
                         result.version.clone_into(&mut pulse.version);
                         pulse.uptime_seconds = result.uptime_seconds;
