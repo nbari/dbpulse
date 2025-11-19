@@ -413,50 +413,79 @@ dbpulse_tls_cert_expiry_days < 30 and dbpulse_tls_cert_expiry_days > 0
 
 ## Database Permissions
 
-The monitoring user needs these permissions:
+The monitoring user needs specific permissions for database operations.
 
 **PostgreSQL:**
 ```sql
+-- Create monitoring database
+CREATE DATABASE dbpulse;
+
 -- Create monitoring user
-CREATE USER dbpulse_monitor WITH PASSWORD 'secret';
+CREATE USER dbpulse WITH PASSWORD 'secret';
 
 -- Grant database access
-GRANT CONNECT ON DATABASE mydb TO dbpulse_monitor;
-GRANT CREATE ON DATABASE mydb TO dbpulse_monitor;  -- Optional: allows auto-creation
+GRANT CONNECT ON DATABASE dbpulse TO dbpulse;
+GRANT CREATE ON DATABASE dbpulse TO dbpulse;
 
 -- Grant schema access
-GRANT USAGE ON SCHEMA public TO dbpulse_monitor;
-GRANT CREATE ON SCHEMA public TO dbpulse_monitor;
+\c dbpulse
+GRANT USAGE ON SCHEMA public TO dbpulse;
+GRANT CREATE ON SCHEMA public TO dbpulse;
 
 -- Allow table creation and operations
-GRANT CREATE ON SCHEMA public TO dbpulse_monitor;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO dbpulse_monitor;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO dbpulse;
 ```
 
 **MySQL/MariaDB:**
 ```sql
--- Create monitoring user
-CREATE USER 'dbpulse_monitor'@'%' IDENTIFIED BY 'secret';
+-- Create monitoring database
+CREATE DATABASE dbpulse;
 
--- Grant necessary permissions
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP ON mydb.* TO 'dbpulse_monitor'@'%';
-GRANT REPLICATION CLIENT ON *.* TO 'dbpulse_monitor'@'%';  -- For replication lag monitoring
-GRANT PROCESS ON *.* TO 'dbpulse_monitor'@'%';  -- For blocking query detection
+-- Create monitoring user
+CREATE USER 'dbpulse'@'%' IDENTIFIED BY 'secret';
+
+-- Grant specific permissions (recommended)
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP ON dbpulse.* TO 'dbpulse'@'%';
+GRANT REPLICATION CLIENT ON *.* TO 'dbpulse'@'%';  -- For replication lag monitoring
+GRANT PROCESS ON *.* TO 'dbpulse'@'%';             -- For blocking query detection
 
 FLUSH PRIVILEGES;
 ```
 
-**Minimal Permissions (read-only monitoring):**
-If the `dbpulse_rw` table already exists, only these are needed:
-```sql
--- PostgreSQL
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE dbpulse_rw TO dbpulse_monitor;
+**Alternative: GRANT ALL PRIVILEGES**
 
--- MySQL
-GRANT SELECT, INSERT, UPDATE, DELETE ON mydb.dbpulse_rw TO 'dbpulse_monitor'@'%';
+While `GRANT ALL PRIVILEGES` is simpler, it has security implications:
+```sql
+-- MySQL/MariaDB - NOT RECOMMENDED for production
+GRANT ALL PRIVILEGES ON dbpulse.* TO 'dbpulse'@'%';
+FLUSH PRIVILEGES;
 ```
 
-**Note:** dbpulse will attempt to create the database if it doesn't exist (requires appropriate permissions).
+**Constraints and security concerns:**
+- ⚠️ Grants excessive permissions including `ALTER`, `INDEX`, `REFERENCES`, `LOCK TABLES`, and more
+- ⚠️ User can modify table structure, which dbpulse doesn't need
+- ⚠️ Violates principle of least privilege
+- ⚠️ May fail security audits or compliance requirements
+- ✅ Use specific permissions above for production environments
+
+**Minimal Permissions (if table exists):**
+If the `dbpulse_rw` table is already created, only these are needed:
+```sql
+-- PostgreSQL
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE dbpulse_rw TO dbpulse;
+
+-- MySQL
+GRANT SELECT, INSERT, UPDATE, DELETE ON dbpulse.dbpulse_rw TO 'dbpulse'@'%';
+```
+
+**Connection string with default database:**
+```sh
+# PostgreSQL
+dbpulse --dsn "postgres://dbpulse:secret@tcp(localhost:5432)/dbpulse"
+
+# MySQL/MariaDB
+dbpulse --dsn "mysql://dbpulse:secret@tcp(localhost:3306)/dbpulse"
+```
 
 ## Monitoring Table
 
