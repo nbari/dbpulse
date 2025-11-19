@@ -401,16 +401,35 @@ pub async fn test_rw_with_table(
         .observe(cleanup_timer.elapsed().as_secs_f64());
 
     // Query approximate table row count (faster than COUNT(*) for large tables)
+    // Note: MariaDB returns BIGINT UNSIGNED, MySQL returns BIGINT
     let row_count_sql = format!(
-        "SELECT table_rows FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name = '{table_name}'"
+        "SELECT CAST(table_rows AS SIGNED) FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name = '{table_name}'"
     );
-    if let Ok(Some(row_count)) = sqlx::query_scalar::<_, i64>(&row_count_sql)
+    match sqlx::query_scalar::<_, Option<i64>>(&row_count_sql)
         .fetch_optional(&mut conn)
         .await
     {
-        TABLE_ROWS
-            .with_label_values(&["mysql", table_name])
-            .set(row_count);
+        Ok(Some(Some(row_count))) => {
+            TABLE_ROWS
+                .with_label_values(&["mysql", table_name])
+                .set(row_count);
+        }
+        Ok(Some(None) | None) => {
+            // NULL or not found - fall back to COUNT(*) for accurate count
+            // This happens when table stats aren't initialized or table is very new
+            let count_sql = format!("SELECT COUNT(*) FROM {table_name}");
+            if let Ok(Some(exact_count)) = sqlx::query_scalar::<_, i64>(&count_sql)
+                .fetch_optional(&mut conn)
+                .await
+            {
+                TABLE_ROWS
+                    .with_label_values(&["mysql", table_name])
+                    .set(exact_count);
+            }
+        }
+        Err(e) => {
+            eprintln!("Error querying table_rows for '{table_name}': {e}");
+        }
     }
 
     // Periodic full table drop: probabilistic cleanup at minute 0 of each hour
@@ -432,21 +451,34 @@ pub async fn test_rw_with_table(
     }
 
     // Query table size in bytes (optional, but useful for monitoring)
+    // Note: MariaDB returns DECIMAL, MySQL returns BIGINT - cast to ensure compatibility
     let size_sql = format!(
-        "SELECT data_length + index_length FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name = '{table_name}'"
+        "SELECT CAST(COALESCE(data_length, 0) + COALESCE(index_length, 0) AS SIGNED) FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name = '{table_name}'"
     );
-    if let Ok(Some(table_bytes)) = sqlx::query_scalar::<_, i64>(&size_sql)
+    match sqlx::query_scalar::<_, i64>(&size_sql)
         .fetch_optional(&mut conn)
         .await
     {
-        TABLE_SIZE_BYTES
-            .with_label_values(&["mysql", table_name])
-            .set(table_bytes);
+        Ok(Some(table_bytes)) => {
+            TABLE_SIZE_BYTES
+                .with_label_values(&["mysql", table_name])
+                .set(table_bytes);
+        }
+        Ok(None) => {
+            // Table not found - set to 0 so metric appears
+            TABLE_SIZE_BYTES
+                .with_label_values(&["mysql", table_name])
+                .set(0);
+        }
+        Err(e) => {
+            eprintln!("Error querying table size for '{table_name}': {e}");
+        }
     }
 
     // Query total database size in bytes
+    // Note: MariaDB returns DECIMAL - cast to SIGNED for compatibility
     if let Ok(Some(db_size)) = sqlx::query_scalar::<_, i64>(
-        "SELECT SUM(data_length + index_length) FROM information_schema.TABLES WHERE table_schema = DATABASE()",
+        "SELECT CAST(SUM(COALESCE(data_length, 0) + COALESCE(index_length, 0)) AS SIGNED) FROM information_schema.TABLES WHERE table_schema = DATABASE()",
     )
     .fetch_optional(&mut conn)
     .await
