@@ -1,3 +1,52 @@
+## 0.8.1 (2025-11-19)
+
+### Fixed
+* **MySQL Table Size Metric** - Fixed `dbpulse_table_size_bytes` not populating for MySQL/MariaDB
+  - Changed from using bind parameter (`.bind(table_name)`) to string interpolation (`format!()`)
+  - Bind parameters don't work for metadata queries against `information_schema.TABLES`
+  - Now consistent with PostgreSQL implementation pattern
+  - Table size metric now properly displays in Grafana for MySQL databases
+* **Table Row Count Frequency** - Updated to populate on every health check instead of once per hour
+  - Previously: `dbpulse_table_rows` only updated during hourly cleanup (minute 0 with id < 5)
+  - Now: Updates on every health check using fast approximate counts
+  - MySQL: Uses `information_schema.TABLES.table_rows` (InnoDB statistics)
+  - PostgreSQL: Uses `pg_class.reltuples` (table statistics)
+  - No performance impact - both use fast estimates without table scans
+  - Better monitoring experience with up-to-date row count trends
+
+### Removed
+* **CONNECTIONS_ACTIVE Metric** - Removed useless metric that always showed 0 or 1
+  - Removed `dbpulse_connections_active` metric definition from code
+  - Reason: Sequential health checks mean the metric only ever shows 0 or 1
+  - Per-instance memory means multiple instances don't aggregate meaningfully
+  - The metric provided no useful observability value
+  - Cleaned up 41 lines of unnecessary code (metric definition, increment/decrement calls, tests)
+
+### Improved
+* **Grafana Dashboard Optimization** - Removed redundant panels and improved metric coverage
+  - Removed "Active Connections" panel (metric no longer exists)
+  - Removed duplicate "Blocking Queries" gauge panel (kept the stat panel)
+  - Moved "Database Size" panel to Overview section (position #6)
+  - Replaced "Certificate Expiry Timeline" with "TLS Certificate Probe Errors" panel
+  - New panel shows certificate probing failures by type (connection, handshake, parse, timeout)
+  - Total panels: 26 (down from 28)
+  - Metrics coverage: 100% (all 23 metrics now used in dashboard)
+  - No unused metrics, no duplicate panels
+  - Dashboard JSON reduced from 2828 to 2670 lines
+* **Code Documentation** - Fixed misleading comments about cleanup behavior
+  - Updated comments in `mysql.rs` and `postgres.rs` to reflect actual probabilistic cleanup
+  - Changed "deterministic cleanup every hour" to "probabilistic cleanup at minute 0"
+  - Clarified that `id < 5` condition (5/range probability) prevents simultaneous drops
+  - Explains the entropy-based approach for distributed coordination-free cleanup
+  - Primary cleanup (delete old records) runs on every health check as documented
+
+### Technical Details
+* Table size query fix applies to line 432 in `src/queries/mysql.rs`
+* Table row count updates now on lines 403-414 (MySQL) and 426-437 (PostgreSQL)
+* Dashboard changes: 183 lines modified (22 insertions, 161 deletions)
+* All changes maintain backward compatibility with Prometheus queries
+* Zero breaking changes for existing deployments
+
 ## 0.8.0 (2025-11-17)
 
 ### Breaking Changes
