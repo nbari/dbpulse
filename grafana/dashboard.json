@@ -481,7 +481,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Database connections currently open by dbpulse. Should normally be 0 between checks. Red (1+) during active health check is normal.",
+      "description": "Total database size including all tables and indexes. Useful for capacity planning. No data means size query not supported or insufficient permissions.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -496,25 +496,29 @@
                 "value": 0
               },
               {
+                "color": "yellow",
+                "value": 1073741824
+              },
+              {
                 "color": "red",
-                "value": 1
+                "value": 10737418240
               }
             ]
           },
-          "unit": "short"
+          "unit": "decbytes"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 2,
-        "w": 6,
-        "x": 6,
-        "y": 3
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 53
       },
       "id": 5,
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
@@ -526,7 +530,7 @@
           "values": false
         },
         "showPercentChange": false,
-        "textMode": "value",
+        "textMode": "value_and_name",
         "wideLayout": true
       },
       "pluginVersion": "12.2.1",
@@ -536,11 +540,12 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_connections_active{job=\"$job\", instance=\"$instance\"}",
+          "expr": "dbpulse_database_size_bytes{job=\"$job\", instance=\"$instance\"}",
+          "legendFormat": "{{database}}",
           "refId": "A"
         }
       ],
-      "title": "Active Connections",
+      "title": "Database Size",
       "type": "stat"
     },
     {
@@ -1414,7 +1419,7 @@
             }
           },
           "mappings": [],
-          "noValue": "No replication lag - this is a primary database",
+          "noValue": "No replication lag",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1483,78 +1488,6 @@
       ],
       "title": "Replication Lag",
       "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "description": "Queries currently blocking others due to locks. Zero is normal and expected. Non-zero indicates lock contention (DDL, long transactions, or table locks).",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 10,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 5
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 45
-      },
-      "id": 20,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.2.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "dbpulse_blocking_queries{job=\"$job\", instance=\"$instance\"}",
-          "legendFormat": "{{database}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Blocking Queries",
-      "type": "gauge"
     },
     {
       "datasource": {
@@ -1791,78 +1724,6 @@
       ],
       "title": "Pulse & Runtime",
       "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "description": "Total database size including all tables and indexes. Useful for capacity planning. No data means size query not supported or insufficient permissions.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "yellow",
-                "value": 1073741824
-              },
-              {
-                "color": "red",
-                "value": 10737418240
-              }
-            ]
-          },
-          "unit": "decbytes"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 53
-      },
-      "id": 21,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "value_and_name",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.2.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "dbpulse_database_size_bytes{job=\"$job\", instance=\"$instance\"}",
-          "legendFormat": "{{database}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Database Size",
-      "type": "stat"
     },
     {
       "collapsed": false,
@@ -2268,7 +2129,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Track certificate expiration over time. Alert when approaching expiration (< 30 days). Only available for MySQL/MariaDB with TLS enabled.",
+      "description": "Certificate probe errors by type (connection, handshake, parse, timeout). Useful for troubleshooting TLS certificate issues.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2358,12 +2219,12 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_tls_cert_expiry_days{job=\"$job\", instance=\"$instance\"}",
-          "legendFormat": "{{database}}",
+          "expr": "rate(dbpulse_tls_cert_probe_errors_total{job=\"$job\", instance=\"$instance\"}[5m])",
+          "legendFormat": "{{database}} - {{error_type}}",
           "refId": "A"
         }
       ],
-      "title": "Certificate Expiry Timeline",
+      "title": "TLS Certificate Probe Errors",
       "type": "timeseries"
     },
     {

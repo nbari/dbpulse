@@ -1,9 +1,9 @@
 use super::HealthCheckResult;
 use crate::{
     metrics::{
-        BLOCKING_QUERIES, CONNECTION_DURATION, CONNECTIONS_ACTIVE, DATABASE_SIZE_BYTES,
-        OPERATION_DURATION, REPLICATION_LAG, ROWS_AFFECTED, TABLE_ROWS, TABLE_SIZE_BYTES,
-        TLS_CERT_PROBE_ERRORS, TLS_HANDSHAKE_DURATION,
+        BLOCKING_QUERIES, CONNECTION_DURATION, DATABASE_SIZE_BYTES, OPERATION_DURATION,
+        REPLICATION_LAG, ROWS_AFFECTED, TABLE_ROWS, TABLE_SIZE_BYTES, TLS_CERT_PROBE_ERRORS,
+        TLS_HANDSHAKE_DURATION,
     },
     tls::{
         TlsConfig, TlsMetadata, TlsMode, TlsProbeProtocol,
@@ -92,7 +92,6 @@ pub async fn test_rw_with_table(
 
     // Track connection establishment
     let conn_start = Instant::now();
-    CONNECTIONS_ACTIVE.inc();
 
     let connect_timer = Instant::now();
     let mut conn = match options.connect().await {
@@ -139,11 +138,9 @@ pub async fn test_rw_with_table(
                     }
                     conn
                 } else {
-                    CONNECTIONS_ACTIVE.dec();
                     return Err(db_err.into());
                 }
             } else {
-                CONNECTIONS_ACTIVE.dec();
                 return Err(err.into());
             }
         }
@@ -378,7 +375,6 @@ pub async fn test_rw_with_table(
         .await?;
 
     if rolled_back_value == Some(0) {
-        CONNECTIONS_ACTIVE.dec();
         return Err(anyhow!("Transaction rollback failed: value is still 0"));
     }
     OPERATION_DURATION
@@ -404,23 +400,31 @@ pub async fn test_rw_with_table(
         .with_label_values(&["mysql", "cleanup"])
         .observe(cleanup_timer.elapsed().as_secs_f64());
 
-    // Periodic full table drop: deterministic cleanup every hour at minute 0
-    // This ensures table is recreated fresh periodically
-    // Only drop if we're sure it's safe (check table size first)
+    // Query approximate table row count (faster than COUNT(*) for large tables)
+    let row_count_sql = format!(
+        "SELECT table_rows FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name = '{table_name}'"
+    );
+    if let Ok(Some(row_count)) = sqlx::query_scalar::<_, i64>(&row_count_sql)
+        .fetch_optional(&mut conn)
+        .await
+    {
+        TABLE_ROWS
+            .with_label_values(&["mysql", table_name])
+            .set(row_count);
+    }
+
+    // Periodic full table drop: probabilistic cleanup at minute 0 of each hour
+    // Only drops when id < 5 (5/range probability) to avoid all instances dropping simultaneously
+    // This ensures table is recreated fresh periodically without coordination between instances
     if now.minute() == 0 && id < 5 {
-        // Check table size before dropping - only drop if it has fewer than 100k rows
+        // Use the row count we just queried (or query again if needed)
         let count_sql = format!("SELECT COUNT(*) FROM {table_name}");
-        if let Ok(Some(row_count)) = sqlx::query_scalar::<_, i64>(&count_sql)
+        if let Ok(Some(exact_count)) = sqlx::query_scalar::<_, i64>(&count_sql)
             .fetch_optional(&mut conn)
             .await
         {
-            // Record table row count
-            TABLE_ROWS
-                .with_label_values(&["mysql", table_name])
-                .set(row_count);
-
             // Only drop if table is relatively small to avoid disrupting active monitoring
-            if row_count < 100_000 {
+            if exact_count < 100_000 {
                 let drop_table_sql = format!("DROP TABLE IF EXISTS {table_name}");
                 sqlx::query(&drop_table_sql).execute(&mut conn).await.ok();
             }
@@ -428,9 +432,10 @@ pub async fn test_rw_with_table(
     }
 
     // Query table size in bytes (optional, but useful for monitoring)
-    let size_sql = "SELECT data_length + index_length FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name = ?";
-    if let Ok(Some(table_bytes)) = sqlx::query_scalar::<_, i64>(size_sql)
-        .bind(table_name)
+    let size_sql = format!(
+        "SELECT data_length + index_length FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name = '{table_name}'"
+    );
+    if let Ok(Some(table_bytes)) = sqlx::query_scalar::<_, i64>(&size_sql)
         .fetch_optional(&mut conn)
         .await
     {
@@ -463,7 +468,6 @@ pub async fn test_rw_with_table(
     // Gracefully close connection to avoid "Connection reset by peer" errors in server logs
     let _ = conn.close().await;
     CONNECTION_DURATION.observe(conn_start.elapsed().as_secs_f64());
-    CONNECTIONS_ACTIVE.dec();
 
     Ok(HealthCheckResult {
         version: version.context("Expected database version")?,

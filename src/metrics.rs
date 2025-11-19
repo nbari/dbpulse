@@ -152,15 +152,6 @@ pub static CONNECTION_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
     .expect("metric can be created")
 });
 
-pub static CONNECTIONS_ACTIVE: LazyLock<IntGauge> = LazyLock::new(|| {
-    register_int_gauge_with_registry!(
-        "dbpulse_connections_active",
-        "Currently active database connections",
-        &REGISTRY
-    )
-    .expect("metric can be created")
-});
-
 // High Priority Metrics
 pub static ROWS_AFFECTED: LazyLock<IntCounterVec> = LazyLock::new(|| {
     register_int_counter_vec_with_registry!(
@@ -302,13 +293,6 @@ mod tests {
         // Test that all metrics can be accessed without panicking
         PULSE.set(1);
         assert_eq!(PULSE.get(), 1);
-
-        // Test inc/dec without checking exact values (shared state across tests)
-        let before = CONNECTIONS_ACTIVE.get();
-        CONNECTIONS_ACTIVE.inc();
-        assert_eq!(CONNECTIONS_ACTIVE.get(), before + 1);
-        CONNECTIONS_ACTIVE.dec();
-        assert_eq!(CONNECTIONS_ACTIVE.get(), before);
     }
 
     #[test]
@@ -428,13 +412,6 @@ mod tests {
         assert_eq!(PULSE.get(), 0);
         PULSE.set(1);
         assert_eq!(PULSE.get(), 1);
-
-        CONNECTIONS_ACTIVE.set(5);
-        assert_eq!(CONNECTIONS_ACTIVE.get(), 5);
-        CONNECTIONS_ACTIVE.inc();
-        assert_eq!(CONNECTIONS_ACTIVE.get(), 6);
-        CONNECTIONS_ACTIVE.dec();
-        assert_eq!(CONNECTIONS_ACTIVE.get(), 5);
     }
 
     #[test]
