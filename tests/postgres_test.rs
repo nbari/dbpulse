@@ -230,3 +230,70 @@ async fn test_postgres_version_info() {
         "Version should contain version number"
     );
 }
+
+#[tokio::test]
+#[ignore = "requires running PostgreSQL container"]
+async fn test_postgres_metrics_collection() {
+    if skip_if_no_postgres() {
+        return;
+    }
+
+    let table_name = test_table_name("test_postgres_metrics_collection");
+    let result = test_postgres_connection_with_table(POSTGRES_DSN, &table_name).await;
+    assert!(result.is_ok(), "Connection should succeed");
+
+    // Encode metrics
+    let metric_families = dbpulse::metrics::REGISTRY.gather();
+    let mut buffer = Vec::new();
+    let encoder = prometheus::TextEncoder::new();
+    prometheus::Encoder::encode(&encoder, &metric_families, &mut buffer)
+        .expect("Failed to encode metrics");
+    let metrics_output = String::from_utf8(buffer).expect("Metrics should be valid UTF-8");
+
+    // Verify critical metrics are present (metrics populated by test_rw function)
+    assert!(
+        metrics_output.contains("dbpulse_operation_duration_seconds"),
+        "dbpulse_operation_duration_seconds metric should be present"
+    );
+    assert!(
+        metrics_output.contains("dbpulse_rows_affected_total"),
+        "dbpulse_rows_affected_total metric should be present"
+    );
+    assert!(
+        metrics_output.contains("dbpulse_connection_duration_seconds"),
+        "dbpulse_connection_duration_seconds metric should be present"
+    );
+
+    // Verify PostgreSQL-specific metrics
+    assert!(
+        metrics_output.contains("database=\"postgres\""),
+        "Metrics should be labeled with database='postgres'"
+    );
+    assert!(
+        metrics_output.contains("operation=\"connect\"")
+            || metrics_output.contains("operation=\\\"connect\\\""),
+        "Should have connect operation metrics"
+    );
+    assert!(
+        metrics_output.contains("operation=\"insert\"")
+            || metrics_output.contains("operation=\\\"insert\\\""),
+        "Should have insert operation metrics"
+    );
+    assert!(
+        metrics_output.contains("operation=\"select\"")
+            || metrics_output.contains("operation=\\\"select\\\""),
+        "Should have select operation metrics"
+    );
+
+    // Verify database size metric (should be present after connection)
+    if metrics_output.contains("dbpulse_database_size_bytes") {
+        println!("✓ Database size metrics are being collected");
+    }
+
+    // Verify table metrics if available (may not be present in all test runs)
+    if metrics_output.contains("dbpulse_table_size_bytes") {
+        println!("✓ Table size metrics are being collected");
+    }
+
+    println!("Metrics verification complete for PostgreSQL");
+}
