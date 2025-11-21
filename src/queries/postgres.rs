@@ -266,7 +266,7 @@ pub async fn test_rw_with_table(
     let create_table_sql = format!(
         r"
         CREATE TABLE IF NOT EXISTS {table_name} (
-            id SERIAL PRIMARY KEY,
+            id INT NOT NULL PRIMARY KEY,
             t1 BIGINT NOT NULL,
             t2 TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
             uuid UUID NOT NULL,
@@ -424,9 +424,12 @@ pub async fn test_rw_with_table(
         .observe(cleanup_timer.elapsed().as_secs_f64());
 
     // Query approximate table row count (faster than COUNT(*) for large tables)
-    // Use pg_class.reltuples for quick estimate
-    let row_count_sql =
-        format!("SELECT reltuples::bigint FROM pg_class WHERE relname = '{table_name}'");
+    // Use pg_class.reltuples for quick estimate with schema qualification
+    let row_count_sql = format!(
+        "SELECT c.reltuples::bigint FROM pg_class c \
+         JOIN pg_namespace n ON c.relnamespace = n.oid \
+         WHERE c.relname = '{table_name}' AND n.nspname = CURRENT_SCHEMA()"
+    );
     if let Ok(Some(row_count)) = sqlx::query_scalar::<_, i64>(&row_count_sql)
         .fetch_optional(&mut conn)
         .await

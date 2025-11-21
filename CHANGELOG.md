@@ -1,3 +1,37 @@
+## 0.8.3 (2025-11-21)
+
+### Fixed
+* **PostgreSQL Table Schema** - Fixed `SERIAL PRIMARY KEY` conflict with manual ID insertion
+  - **Root Cause**: Table used `SERIAL PRIMARY KEY` while code manually inserts random IDs
+  - **Impact**: Auto-incrementing sequence could drift out of sync with manual inserts, causing future conflicts
+  - **Solution**: Changed from `id SERIAL PRIMARY KEY` to `id INT NOT NULL PRIMARY KEY`
+  - Now consistent with MySQL/MariaDB implementation
+  - Prevents sequence-related conflicts in long-running deployments
+* **PostgreSQL Row Count Query** - Fixed potential incorrect row count with multiple schemas
+  - **Root Cause**: Query lacked schema qualification when selecting from `pg_class`
+  - **Impact**: Could return wrong table statistics if multiple schemas have tables with the same name
+  - **Solution**: Added schema qualification with `pg_namespace` join
+  - Query now uses: `JOIN pg_namespace n ON c.relnamespace = n.oid WHERE ... AND n.nspname = CURRENT_SCHEMA()`
+  - Ensures row count metrics always reference the correct table in the current schema
+
+### Added
+* **Metrics Collection Verification Tests** - New integration tests validate metric population
+  - `test_postgres_metrics_collection`: Validates PostgreSQL metrics are collected and exposed
+  - `test_mariadb_metrics_collection`: Validates MariaDB metrics are collected and exposed
+  - Tests verify critical metrics: `dbpulse_operation_duration_seconds`, `dbpulse_rows_affected_total`, `dbpulse_connection_duration_seconds`
+  - Tests verify database-specific operation labels (connect, insert, select)
+  - Tests confirm database size and table size metrics are being populated
+  - Total: 2 new integration tests ensuring metrics work end-to-end
+
+### Technical Details
+* PostgreSQL table schema fix in `src/queries/postgres.rs:269`
+* PostgreSQL row count query fix in `src/queries/postgres.rs:428-432`
+* New tests in `tests/postgres_test.rs` and `tests/mariadb_test.rs`
+* All changes maintain backward compatibility - no schema migrations needed
+* Existing deployments: table will be recreated with correct schema during next periodic drop
+* Zero breaking changes for existing users
+* All quality gates passed: fmt, clippy (strict), tests (97 unit + 23 integration + 15 TLS)
+
 ## 0.8.2 (2025-11-19)
 
 ### Fixed
