@@ -31,13 +31,13 @@ The tool protects itself from hanging on locked tables using configurable timeou
 
 ```sh
 # PostgreSQL
-dbpulse --dsn "postgres://user:password@tcp(localhost:5432)/mydb"
+dbpulse --dsn "postgres://user:password@tcp(localhost:5432)/dbpulse"
 
 # MySQL/MariaDB
-dbpulse --dsn "mysql://user:password@tcp(localhost:3306)/mydb"
+dbpulse --dsn "mysql://user:password@tcp(localhost:3306)/dbpulse"
 
 # With custom interval and range
-dbpulse --dsn "postgres://user:pass@tcp(db.example.com:5432)/prod" \
+dbpulse --dsn "postgres://user:pass@tcp(db.example.com:5432)/dbpulse" \
   --interval 60 \
   --range 1000 \
   --port 9300
@@ -83,16 +83,16 @@ The Data Source Name (DSN) follows this format:
 
 ```sh
 # PostgreSQL
-postgres://dbuser:secret@tcp(localhost:5432)/production
+postgres://dbuser:secret@tcp(localhost:5432)/dbpulse
 
 # MySQL/MariaDB
-mysql://root:password@tcp(db.example.com:3306)/myapp
+mysql://root:password@tcp(db.example.com:3306)/dbpulse
 
 # With custom port
-postgres://admin:pass@tcp(10.0.1.50:5433)/metrics_db
+postgres://admin:pass@tcp(10.0.1.50:5433)/dbpulse
 
 # Unix socket (PostgreSQL)
-postgres://user:pass@unix(/var/run/postgresql)/mydb
+postgres://user:pass@unix(/var/run/postgresql)/dbpulse
 ```
 
 #### TLS/SSL Parameters
@@ -116,16 +116,16 @@ Configure TLS directly in the DSN query string:
 
 ```sh
 # PostgreSQL with TLS required
-dbpulse --dsn "postgres://user:pass@tcp(db.example.com:5432)/prod?sslmode=require"
+dbpulse --dsn "postgres://user:pass@tcp(db.example.com:5432)/dbpulse?sslmode=require"
 
 # PostgreSQL with full certificate verification
-dbpulse --dsn "postgres://user:pass@tcp(db.example.com:5432)/prod?sslmode=verify-full&sslrootcert=/etc/ssl/certs/ca.crt"
+dbpulse --dsn "postgres://user:pass@tcp(db.example.com:5432)/dbpulse?sslmode=verify-full&sslrootcert=/etc/ssl/certs/ca.crt"
 
 # MySQL with CA verification
-dbpulse --dsn "mysql://user:pass@tcp(db.example.com:3306)/prod?sslmode=verify-ca&sslca=/etc/ssl/ca.crt"
+dbpulse --dsn "mysql://user:pass@tcp(db.example.com:3306)/dbpulse?sslmode=verify-ca&sslca=/etc/ssl/ca.crt"
 
 # Mutual TLS (client certificates)
-dbpulse --dsn "postgres://user:pass@tcp(db.example.com:5432)/prod?sslmode=verify-full&sslrootcert=/etc/ssl/ca.crt&sslcert=/etc/ssl/client.crt&sslkey=/etc/ssl/client.key"
+dbpulse --dsn "postgres://user:pass@tcp(db.example.com:5432)/dbpulse?sslmode=verify-full&sslrootcert=/etc/ssl/ca.crt&sslcert=/etc/ssl/client.crt&sslkey=/etc/ssl/client.key"
 ```
 
 ### Environment Variables
@@ -133,7 +133,7 @@ dbpulse --dsn "postgres://user:pass@tcp(db.example.com:5432)/prod?sslmode=verify
 All options can be set via environment variables:
 
 ```sh
-export DBPULSE_DSN="postgres://user:pass@tcp(localhost:5432)/mydb"
+export DBPULSE_DSN="postgres://user:pass@tcp(localhost:5432)/dbpulse"
 export DBPULSE_INTERVAL=60
 export DBPULSE_PORT=9300
 export DBPULSE_RANGE=1000
@@ -162,7 +162,7 @@ export DBPULSE_TLS_CERT_CACHE_TTL=0
 **Production PostgreSQL with TLS:**
 ```sh
 dbpulse \
-  --dsn "postgres://monitor:secret@tcp(prod-db.example.com:5432)/app?sslmode=verify-full&sslrootcert=/etc/ssl/certs/ca-bundle.crt" \
+  --dsn "postgres://monitor:secret@tcp(prod-db.example.com:5432)/dbpulse?sslmode=verify-full&sslrootcert=/etc/ssl/certs/ca-bundle.crt" \
   --interval 30 \
   --port 9300 \
   --range 1000
@@ -171,7 +171,7 @@ dbpulse \
 **MySQL Cluster Monitoring:**
 ```sh
 dbpulse \
-  --dsn "mysql://healthcheck:pass@tcp(galera-lb.internal:3306)/monitoring" \
+  --dsn "mysql://healthcheck:pass@tcp(galera-lb.internal:3306)/dbpulse" \
   --interval 15 \
   --listen "0.0.0.0" \
   --port 8080
@@ -179,7 +179,7 @@ dbpulse \
 
 **Development Setup:**
 ```sh
-dbpulse --dsn "postgres://postgres:postgres@tcp(localhost:5432)/test" -i 10 -r 50
+dbpulse --dsn "postgres://postgres:postgres@tcp(localhost:5432)/dbpulse" -i 10 -r 50
 ```
 
 ## How It Works
@@ -192,7 +192,7 @@ All TLS/SSL settings come from the DSN query parameters (no separate flags):
 
 ```bash
 # TLS configuration is in the DSN string
---dsn "postgres://user:pass@host:5432/db?sslmode=verify-full&sslrootcert=/etc/ssl/ca.crt"
+--dsn "postgres://user:pass@host:5432/dbpulse?sslmode=verify-full&sslrootcert=/etc/ssl/ca.crt"
 ```
 
 The DSN parser extracts `sslmode`, `sslrootcert`, `sslcert`, and `sslkey` parameters into a `TlsConfig` struct used for both database and certificate connections.
@@ -300,6 +300,7 @@ dbpulse exposes comprehensive Prometheus-compatible metrics on the `/metrics` en
 | `dbpulse_iterations_total` | Counter | Total checks by status (success/error) |
 | `dbpulse_last_success_timestamp_seconds` | Gauge | Unix timestamp of last successful check |
 | `dbpulse_database_readonly` | Gauge | Read-only mode indicator (1=read-only, 0=read-write) |
+| `dbpulse_database_host_info` | Gauge | Current backend host serving the connection (label: `host`) |
 
 ### Performance Metrics
 
@@ -365,6 +366,9 @@ rate(dbpulse_operation_duration_seconds_sum{operation="connect"}[5m]) /
 
 # TLS certificate expiry (days remaining)
 dbpulse_tls_cert_expiry_days
+
+# Current backend host (use in table/stat panel)
+dbpulse_database_host_info
 
 # Certificates expiring within 30 days
 dbpulse_tls_cert_expiry_days < 30 and dbpulse_tls_cert_expiry_days > 0
@@ -529,10 +533,10 @@ The table is automatically maintained:
 Use different table names for multiple monitoring instances:
 ```sh
 # Instance 1
-dbpulse --dsn "postgres://user:pass@tcp(db:5432)/prod" --range 1000
+dbpulse --dsn "postgres://user:pass@tcp(db:5432)/dbpulse" --range 1000
 
 # Instance 2 (different range = different table name)
-dbpulse --dsn "postgres://user:pass@tcp(db:5432)/prod" --range 2000
+dbpulse --dsn "postgres://user:pass@tcp(db:5432)/dbpulse" --range 2000
 ```
 
 ## Deployment
@@ -552,7 +556,7 @@ podman pull ghcr.io/nbari/dbpulse:latest
 podman run -d \
   --name dbpulse \
   -p 9300:9300 \
-  -e DBPULSE_DSN="postgres://user:password@host.docker.internal:5432/mydb" \
+  -e DBPULSE_DSN="postgres://user:password@host.docker.internal:5432/dbpulse" \
   ghcr.io/nbari/dbpulse:latest
 
 # MySQL/MariaDB with TLS
@@ -560,7 +564,7 @@ docker run -d \
   --name dbpulse \
   -p 9300:9300 \
   -v /etc/ssl/certs:/etc/ssl/certs:ro \
-  -e DBPULSE_DSN="mysql://user:pass@tcp(db.example.com:3306)/prod?sslmode=verify-ca&sslca=/etc/ssl/certs/ca.crt" \
+  -e DBPULSE_DSN="mysql://user:pass@tcp(db.example.com:3306)/dbpulse?sslmode=verify-ca&sslca=/etc/ssl/certs/ca.crt" \
   -e DBPULSE_INTERVAL=60 \
   ghcr.io/nbari/dbpulse:latest
 ```
@@ -580,7 +584,7 @@ After=network.target
 Type=simple
 User=dbpulse
 Group=dbpulse
-Environment="DBPULSE_DSN=postgres://monitor:secret@tcp(localhost:5432)/prod?sslmode=verify-full&sslrootcert=/etc/ssl/certs/ca.crt"
+Environment="DBPULSE_DSN=postgres://monitor:secret@tcp(localhost:5432)/dbpulse?sslmode=verify-full&sslrootcert=/etc/ssl/certs/ca.crt"
 Environment="DBPULSE_INTERVAL=30"
 Environment="DBPULSE_PORT=9300"
 ExecStart=/usr/local/bin/dbpulse

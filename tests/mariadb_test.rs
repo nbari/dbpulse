@@ -5,6 +5,17 @@ use common::*;
 use dbpulse::queries::mysql;
 use dbpulse::tls::cache::CertCache;
 use dbpulse::tls::{TlsConfig, TlsMode};
+use std::process::{Child, Command, Stdio};
+use tokio::time::Duration;
+
+struct ChildGuard(Child);
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 #[tokio::test]
 #[ignore = "requires running MariaDB container"]
@@ -244,6 +255,25 @@ async fn test_mariadb_read_only_detection() {
 
 #[tokio::test]
 #[ignore = "requires running MariaDB container"]
+async fn test_mariadb_reports_backend_host() {
+    if skip_if_no_mariadb() {
+        return;
+    }
+
+    let table_name = test_table_name("test_mariadb_reports_backend_host");
+    let result = test_mariadb_connection_with_table(MARIADB_DSN, &table_name).await;
+    assert!(result.is_ok());
+
+    let health = result.unwrap();
+    let host = health.db_host.unwrap_or_default();
+    assert!(
+        !host.trim().is_empty(),
+        "Expected non-empty MariaDB backend host"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires running MariaDB container"]
 async fn test_mariadb_metrics_collection() {
     if skip_if_no_mariadb() {
         return;
@@ -307,4 +337,59 @@ async fn test_mariadb_metrics_collection() {
     }
 
     println!("Metrics verification complete for MariaDB");
+}
+
+#[tokio::test]
+#[ignore = "requires running dbpulse-mariadb container and podman/docker access"]
+async fn test_mariadb_pulse_transition_stop_start() {
+    if skip_if_no_mariadb() {
+        return;
+    }
+    if std::env::var("RUN_FAILOVER_TRANSITION_TESTS").as_deref() != Ok("1") {
+        println!("Skipping failover transition test (set RUN_FAILOVER_TRANSITION_TESTS=1)");
+        return;
+    }
+
+    let port = pick_free_port();
+    let binary = dbpulse_binary_path();
+
+    let child = Command::new(binary)
+        .args([
+            "--dsn",
+            MARIADB_DSN,
+            "--interval",
+            "1",
+            "--listen",
+            "127.0.0.1",
+            "--port",
+            &port.to_string(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn dbpulse");
+    let _guard = ChildGuard(child);
+
+    assert!(
+        wait_for_pulse_value(port, 1, Duration::from_secs(40)).await,
+        "Expected initial pulse=1 before failover simulation"
+    );
+
+    assert!(
+        control_container("stop", "dbpulse-mariadb"),
+        "Failed to stop MariaDB container (dbpulse-mariadb)"
+    );
+    assert!(
+        wait_for_pulse_value(port, 0, Duration::from_secs(30)).await,
+        "Expected pulse transition to 0 after container stop"
+    );
+
+    assert!(
+        control_container("start", "dbpulse-mariadb"),
+        "Failed to start MariaDB container (dbpulse-mariadb)"
+    );
+    assert!(
+        wait_for_pulse_value(port, 1, Duration::from_secs(60)).await,
+        "Expected pulse transition back to 1 after container start"
+    );
 }

@@ -1,3 +1,51 @@
+## 0.9.0 (2026-02-13)
+
+### Breaking Changes
+* **Pulse Semantics in Read-Only/Recovery** - `dbpulse_pulse` now reports unhealthy (`0`) when writes are not possible
+  - **Previous behavior**: Database could still appear healthy while in read-only/recovery state
+  - **New behavior**: Read-only/recovery conditions are treated as failed health checks
+  - **Impact**: Alerting/SLOs based on `dbpulse_pulse` or `dbpulse_iterations_total` may change
+  - **Rationale**: `dbpulse` health checks are intended to validate end-to-end read/write/transaction capability
+
+### Added
+* **Database Host Metric** - New metric: `dbpulse_database_host_info{database,host}=1`
+  - Exposes backend host identity for operators during VIP/failover transitions
+  - MySQL/MariaDB source: `SELECT @@hostname`
+  - PostgreSQL source: `SELECT COALESCE(inet_server_addr()::text, 'local')`
+  - Enables clear dashboard visibility of which backend is serving traffic
+* **Failover Transition Integration Tests**
+  - Added PostgreSQL and MariaDB transition tests validating pulse sequence `1 -> 0 -> 1` during stop/start events
+  - Tests simulate failover-like interruption and recovery at the exporter layer
+  - Environment-gated locally with `RUN_FAILOVER_TRANSITION_TESTS=1`
+* **CI Failover Coverage**
+  - Added dedicated GitHub Actions job to always run failover transition tests in CI
+  - Runs transition tests in isolation with `RUN_FAILOVER_TRANSITION_TESTS=1` to prevent interference with regular integration tests
+
+### Fixed
+* **Sub-Second Interval Accuracy** - Fixed sleep timing regression for short intervals (issue #11)
+  - **Root Cause**: Remaining interval sleep was truncated to whole seconds
+  - **Impact**: `-i 1` and other short intervals could run faster than configured
+  - **Solution**: Preserved sub-second remainder when calculating sleep duration
+  - Added regression tests for millisecond-level remainder handling
+* **Database Version Info Label Staleness**
+  - Fixed stale `dbpulse_database_version_info` label series persisting across transitions
+  - Previous version label values are now removed when version changes
+  - Prevents dashboards from showing old and new version labels simultaneously
+
+### Technical Details
+* Pulse/read-only behavior updates in `src/pulse.rs`
+* Host collection added in:
+  - `src/queries/mysql.rs`
+  - `src/queries/postgres.rs`
+  - `src/queries/mod.rs`
+* New metric definition in `src/metrics.rs`
+* Dashboard updates in `grafana/dashboard.json` (Database Host panel + Database Version handling)
+* New integration and helper coverage in:
+  - `tests/postgres_test.rs`
+  - `tests/mariadb_test.rs`
+  - `tests/common/mod.rs`
+* CI failover workflow coverage added in `.github/workflows/test.yml`
+
 ## 0.8.3 (2025-11-21)
 
 ### Fixed
