@@ -191,6 +191,19 @@ jobs:
             sleep 2
           done
 
+          echo "Verifying PostgreSQL from host..."
+          for i in {1..30}; do
+            if PGPASSWORD=secret psql -h 127.0.0.1 -p 5432 -U postgres -d testdb -c "SELECT 1" > /dev/null 2>&1; then
+              echo "PostgreSQL host access is ready!"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "PostgreSQL host access did not become ready in time"
+              exit 1
+            fi
+            sleep 1
+          done
+
           echo "Waiting for MariaDB..."
           for i in {1..30}; do
             if docker exec dbpulse-mariadb mariadb -u dbpulse -psecret -D testdb -e "SELECT 1" > /dev/null 2>&1; then

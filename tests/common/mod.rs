@@ -11,8 +11,8 @@ use tokio::{
     time::{Duration, Instant, sleep},
 };
 
-pub const POSTGRES_DSN: &str = "postgres://postgres:secret@tcp(localhost:5432)/testdb";
-pub const MARIADB_DSN: &str = "mysql://dbpulse:secret@tcp(localhost:3306)/testdb";
+pub const POSTGRES_DSN: &str = "postgres://postgres:secret@tcp(127.0.0.1:5432)/testdb";
+pub const MARIADB_DSN: &str = "mysql://dbpulse:secret@tcp(127.0.0.1:3306)/testdb";
 
 pub fn skip_if_no_postgres() -> bool {
     env::var("SKIP_POSTGRES_TESTS").is_ok()
@@ -137,13 +137,20 @@ pub async fn fetch_metrics(port: u16) -> Option<String> {
     let request =
         format!("GET /metrics HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).await.ok()?;
-    stream.shutdown().await.ok()?;
 
     let mut response = Vec::new();
-    stream.read_to_end(&mut response).await.ok()?;
+    tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut response))
+        .await
+        .ok()?
+        .ok()?;
     let response = String::from_utf8(response).ok()?;
-    let (_, body) = response.split_once("\r\n\r\n")?;
-    Some(body.to_string())
+    if let Some((_, body)) = response.split_once("\r\n\r\n") {
+        return Some(body.to_string());
+    }
+    if let Some((_, body)) = response.split_once("\n\n") {
+        return Some(body.to_string());
+    }
+    None
 }
 
 pub fn extract_pulse(metrics: &str) -> Option<i64> {
@@ -168,6 +175,90 @@ pub async fn wait_for_pulse_value(port: u16, expected: i64, timeout: Duration) -
         }
 
         sleep(Duration::from_millis(250)).await;
+    }
+}
+
+pub async fn wait_for_metrics_endpoint(port: u16, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if fetch_metrics(port).await.is_some() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
+}
+
+pub async fn wait_for_pulse_value_detailed(
+    port: u16,
+    expected: i64,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    let mut last_metrics: Option<String> = None;
+
+    loop {
+        if let Some(metrics) = fetch_metrics(port).await {
+            if extract_pulse(&metrics) == Some(expected) {
+                return Ok(());
+            }
+            last_metrics = Some(metrics);
+        }
+
+        if Instant::now() >= deadline {
+            let details = last_metrics.map_or_else(
+                || "no metrics response received".to_string(),
+                |metrics| summarize_key_metrics(&metrics),
+            );
+            return Err(format!(
+                "Timed out waiting for pulse={expected} on port {port}. {details}"
+            ));
+        }
+
+        sleep(Duration::from_millis(250)).await;
+    }
+}
+
+fn summarize_key_metrics(metrics: &str) -> String {
+    let important = metrics.lines().filter(|line| {
+        line.starts_with("dbpulse_pulse ")
+            || line.starts_with("dbpulse_errors_total")
+            || line.starts_with("dbpulse_iterations_total")
+            || line.starts_with("dbpulse_database_version_info")
+    });
+    let summary = important.collect::<Vec<_>>().join("\n");
+    if summary.is_empty() {
+        "metrics received, but no key dbpulse lines were found".to_string()
+    } else {
+        format!("latest key metrics:\n{summary}")
+    }
+}
+
+pub async fn wait_for_postgres_ready(dsn_str: &str, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if test_postgres_connection(dsn_str).await.is_ok() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        sleep(Duration::from_millis(500)).await;
+    }
+}
+
+pub async fn wait_for_mariadb_ready(dsn_str: &str, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if test_mariadb_connection(dsn_str).await.is_ok() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        sleep(Duration::from_millis(500)).await;
     }
 }
 

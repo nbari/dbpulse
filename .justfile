@@ -220,7 +220,7 @@ test-integration:
   # Start databases
   podman run -d --name dbpulse-postgres \
     -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=testdb \
-    -p 5432:5432 postgres:latest
+    -p 5432:5432 postgres:18
 
   podman run -d --name dbpulse-mariadb \
     -e MARIADB_USER=dbpulse -e MARIADB_PASSWORD=secret \
@@ -264,6 +264,62 @@ test-integration:
   podman rm -f dbpulse-postgres dbpulse-mariadb > /dev/null 2>&1
   echo "✅ Integration tests complete!"
 
+# Run failover transition tests locally (podman-only)
+test-failover:
+  #!/usr/bin/env bash
+  set -e
+  echo "🧪 Running failover transition tests (podman)..."
+
+  podman rm -f dbpulse-postgres dbpulse-mariadb 2>/dev/null || true
+
+  podman run -d --name dbpulse-postgres \
+    -e POSTGRES_USER=postgres \
+    -e POSTGRES_PASSWORD=secret \
+    -e POSTGRES_DB=testdb \
+    -p 5432:5432 postgres:18
+
+  podman run -d --name dbpulse-mariadb \
+    -e MARIADB_USER=dbpulse \
+    -e MARIADB_PASSWORD=secret \
+    -e MARIADB_ROOT_PASSWORD=secret \
+    -e MARIADB_DATABASE=testdb \
+    -p 3306:3306 mariadb:latest
+
+  echo "⏳ Waiting for databases..."
+  for i in {1..30}; do
+    if podman exec dbpulse-postgres pg_isready -U postgres > /dev/null 2>&1; then
+      echo "✓ PostgreSQL ready"
+      break
+    fi
+    if [ "$i" -eq 30 ]; then
+      echo "❌ PostgreSQL did not become ready"
+      podman logs dbpulse-postgres
+      podman rm -f dbpulse-postgres dbpulse-mariadb > /dev/null 2>&1
+      exit 1
+    fi
+    sleep 1
+  done
+
+  for i in {1..30}; do
+    if podman exec dbpulse-mariadb mariadb -u dbpulse -psecret -D testdb -e "SELECT 1" > /dev/null 2>&1; then
+      echo "✓ MariaDB ready"
+      break
+    fi
+    if [ "$i" -eq 30 ]; then
+      echo "❌ MariaDB did not become ready"
+      podman logs dbpulse-mariadb
+      podman rm -f dbpulse-postgres dbpulse-mariadb > /dev/null 2>&1
+      exit 1
+    fi
+    sleep 1
+  done
+
+  RUN_FAILOVER_TRANSITION_TESTS=1 cargo test --test postgres_test test_postgres_pulse_transition_stop_start -- --ignored --nocapture --test-threads=1
+  RUN_FAILOVER_TRANSITION_TESTS=1 cargo test --test mariadb_test test_mariadb_pulse_transition_stop_start -- --ignored --nocapture --test-threads=1
+
+  podman rm -f dbpulse-postgres dbpulse-mariadb > /dev/null 2>&1
+  echo "✅ Failover transition tests complete!"
+
 # ===== TLS Testing =====
 
 # Run all TLS integration tests (setup, test, cleanup)
@@ -281,7 +337,7 @@ test-tls:
 
   # Build PostgreSQL image with proper key permissions
   cat > Dockerfile.postgres-tls <<'EOF'
-  FROM postgres:17-alpine
+  FROM postgres:18-alpine
   COPY .certs/postgres/server.crt /var/lib/postgresql/server.crt
   COPY .certs/postgres/server.key /var/lib/postgresql/server.key
   COPY .certs/postgres/ca.crt /var/lib/postgresql/ca.crt
