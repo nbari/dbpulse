@@ -9,9 +9,28 @@ use std::sync::LazyLock;
 
 pub static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
 
+trait ResultExt<T> {
+    fn or_exit(self, context: &str) -> T;
+}
+
+impl<T, E> ResultExt<T> for Result<T, E>
+where
+    E: std::fmt::Display,
+{
+    fn or_exit(self, context: &str) -> T {
+        match self {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!("failed to initialize metric ({context}): {err}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
 pub static PULSE: LazyLock<IntGauge> = LazyLock::new(|| {
     register_int_gauge_with_registry!("dbpulse_pulse", "1 ok, 0 error", &REGISTRY)
-        .expect("metric can be created")
+        .or_exit("metric can be created")
 });
 
 pub static RUNTIME: LazyLock<Histogram> = LazyLock::new(|| {
@@ -19,7 +38,7 @@ pub static RUNTIME: LazyLock<Histogram> = LazyLock::new(|| {
         HistogramOpts::new("dbpulse_runtime", "pulse latency in seconds"),
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 // TLS-specific metrics
@@ -32,7 +51,7 @@ pub static TLS_HANDSHAKE_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
         &["database"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static TLS_CONNECTION_ERRORS: LazyLock<IntCounterVec> = LazyLock::new(|| {
@@ -44,7 +63,7 @@ pub static TLS_CONNECTION_ERRORS: LazyLock<IntCounterVec> = LazyLock::new(|| {
         &["database", "error_type"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static TLS_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
@@ -56,7 +75,7 @@ pub static TLS_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         &["database", "version", "cipher"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static TLS_CERT_EXPIRY_DAYS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
@@ -68,7 +87,7 @@ pub static TLS_CERT_EXPIRY_DAYS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         &["database"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static TLS_CERT_PROBE_ERRORS: LazyLock<IntCounterVec> = LazyLock::new(|| {
@@ -80,7 +99,7 @@ pub static TLS_CERT_PROBE_ERRORS: LazyLock<IntCounterVec> = LazyLock::new(|| {
         &["database", "error_type"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static DATABASE_VERSION_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
@@ -92,7 +111,7 @@ pub static DATABASE_VERSION_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         &["database", "version"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static DATABASE_HOST_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
@@ -104,7 +123,7 @@ pub static DATABASE_HOST_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         &["database", "host"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static DATABASE_UPTIME_SECONDS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
@@ -116,7 +135,7 @@ pub static DATABASE_UPTIME_SECONDS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         &["database"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static LAST_RUNTIME_MS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
@@ -128,7 +147,7 @@ pub static LAST_RUNTIME_MS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         &["database"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 // Critical Priority Metrics
@@ -138,7 +157,7 @@ pub static DB_ERRORS: LazyLock<IntCounterVec> = LazyLock::new(|| {
         &["database", "error_type"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static OPERATION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
@@ -150,7 +169,7 @@ pub static OPERATION_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
         &["database", "operation"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static CONNECTION_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
@@ -161,7 +180,7 @@ pub static CONNECTION_DURATION: LazyLock<Histogram> = LazyLock::new(|| {
         ),
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 // High Priority Metrics
@@ -174,7 +193,7 @@ pub static ROWS_AFFECTED: LazyLock<IntCounterVec> = LazyLock::new(|| {
         &["database", "operation"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static ITERATIONS_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
@@ -183,7 +202,7 @@ pub static ITERATIONS_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
         &["database", "status"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static LAST_SUCCESS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
@@ -195,7 +214,7 @@ pub static LAST_SUCCESS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         &["database"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 // Medium Priority Metrics
@@ -208,7 +227,7 @@ pub static TABLE_SIZE_BYTES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         &["database", "table"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static TABLE_ROWS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
@@ -217,7 +236,7 @@ pub static TABLE_ROWS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         &["database", "table"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static PANICS_RECOVERED: LazyLock<IntCounter> = LazyLock::new(|| {
@@ -228,7 +247,7 @@ pub static PANICS_RECOVERED: LazyLock<IntCounter> = LazyLock::new(|| {
         ),
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static DB_READONLY: LazyLock<IntGaugeVec> = LazyLock::new(|| {
@@ -240,7 +259,7 @@ pub static DB_READONLY: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         &["database"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 // Replication and Performance Metrics
@@ -253,7 +272,7 @@ pub static REPLICATION_LAG: LazyLock<HistogramVec> = LazyLock::new(|| {
         &["database"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static BLOCKING_QUERIES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
@@ -265,7 +284,7 @@ pub static BLOCKING_QUERIES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         &["database"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 pub static DATABASE_SIZE_BYTES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
@@ -277,7 +296,7 @@ pub static DATABASE_SIZE_BYTES: LazyLock<IntGaugeVec> = LazyLock::new(|| {
         &["database"],
         &REGISTRY
     )
-    .expect("metric can be created")
+    .or_exit("metric can be created")
 });
 
 /// Encode and return metrics for HTTP export
@@ -298,6 +317,8 @@ pub fn encode_metrics() -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
     use super::*;
 
     #[test]

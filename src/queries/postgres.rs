@@ -42,7 +42,6 @@ pub async fn test_rw(
 /// # Errors
 ///
 /// Returns an error if database connection or operations fail
-#[allow(clippy::too_many_lines, clippy::cast_possible_wrap)]
 pub async fn test_rw_with_table(
     dsn: &DSN,
     now: DateTime<Utc>,
@@ -52,6 +51,65 @@ pub async fn test_rw_with_table(
     table_name: &str,
 ) -> Result<HealthCheckResult> {
     ensure_crypto_provider();
+    let options = postgres_connect_options(dsn, tls);
+    let conn_start = Instant::now();
+    let mut conn = connect_postgres(&options, dsn, tls).await?;
+    set_postgres_session_timeouts(&mut conn).await?;
+
+    let health_info = fetch_postgres_health_info(&mut conn).await?;
+    if postgres_is_in_recovery(&mut conn).await? {
+        maybe_record_postgres_replication_lag(&mut conn).await;
+        return postgres_read_only_result(
+            dsn,
+            tls,
+            &mut conn,
+            cert_cache,
+            health_info,
+            "Database is in recovery mode",
+        )
+        .await;
+    }
+    if postgres_transaction_is_read_only(&mut conn).await? {
+        return postgres_read_only_result(
+            dsn,
+            tls,
+            &mut conn,
+            cert_cache,
+            health_info,
+            "Transaction read-only mode enabled",
+        )
+        .await;
+    }
+
+    monitor_postgres_blocking_queries(&mut conn).await;
+    ensure_postgres_uuid_extension(&mut conn).await?;
+    ensure_postgres_table(&mut conn, table_name).await?;
+    let id = postgres_insert_and_verify(&mut conn, now, range, table_name).await?;
+    postgres_transaction_rollback_test(&mut conn, now, table_name).await?;
+    postgres_cleanup_old_records(&mut conn, table_name).await;
+    update_postgres_table_rows_metric(&mut conn, table_name).await;
+    maybe_drop_postgres_table_hourly(&mut conn, now, id, table_name).await;
+    update_postgres_size_metrics(&mut conn, table_name).await;
+
+    let tls_metadata = maybe_extract_postgres_tls(dsn, tls, &mut conn, cert_cache).await;
+    let _ = conn.close().await;
+    CONNECTION_DURATION.observe(conn_start.elapsed().as_secs_f64());
+
+    Ok(HealthCheckResult {
+        version: health_info.version.context("Expected database version")?,
+        db_host: health_info.db_host,
+        uptime_seconds: health_info.uptime_seconds,
+        tls_metadata,
+    })
+}
+
+struct PostgresHealthInfo {
+    version: Option<String>,
+    db_host: Option<String>,
+    uptime_seconds: Option<i64>,
+}
+
+fn postgres_connect_options(dsn: &DSN, tls: &TlsConfig) -> PgConnectOptions {
     let mut options = PgConnectOptions::new()
         .username(dsn.username.clone().unwrap_or_default().as_ref())
         .password(dsn.password.clone().unwrap_or_default().as_str())
@@ -63,7 +121,6 @@ pub async fn test_rw_with_table(
         options = options.socket(socket.as_str());
     }
 
-    // Apply TLS configuration
     options = match tls.mode {
         TlsMode::Disable => options.ssl_mode(PgSslMode::Disable),
         TlsMode::Require => options.ssl_mode(PgSslMode::Require),
@@ -83,28 +140,35 @@ pub async fn test_rw_with_table(
         }
     };
 
-    // Apply client certificate if provided
     if let (Some(cert_path), Some(key_path)) = (&tls.cert, &tls.key) {
         options = options.ssl_client_cert(cert_path).ssl_client_key(key_path);
     }
 
-    // Track connection establishment
-    let conn_start = Instant::now();
+    options
+}
 
+fn record_postgres_connect_metrics(tls: &TlsConfig, connect_timer: Instant) {
+    let connect_duration = connect_timer.elapsed().as_secs_f64();
+    OPERATION_DURATION
+        .with_label_values(&["postgres", "connect"])
+        .observe(connect_duration);
+    if tls.mode.is_enabled() {
+        TLS_HANDSHAKE_DURATION
+            .with_label_values(&["postgres"])
+            .observe(connect_duration);
+    }
+}
+
+async fn connect_postgres(
+    options: &PgConnectOptions,
+    dsn: &DSN,
+    tls: &TlsConfig,
+) -> Result<sqlx::PgConnection> {
     let connect_timer = Instant::now();
-    let mut conn = match options.connect().await {
+    match options.connect().await {
         Ok(conn) => {
-            let connect_duration = connect_timer.elapsed().as_secs_f64();
-            OPERATION_DURATION
-                .with_label_values(&["postgres", "connect"])
-                .observe(connect_duration);
-            // Record TLS handshake duration if TLS is enabled
-            if tls.mode.is_enabled() {
-                TLS_HANDSHAKE_DURATION
-                    .with_label_values(&["postgres"])
-                    .observe(connect_duration);
-            }
-            conn
+            record_postgres_connect_metrics(tls, connect_timer);
+            Ok(conn)
         }
         Err(err) => {
             if let sqlx::Error::Database(db_err) = err {
@@ -114,165 +178,156 @@ pub async fn test_rw_with_table(
                     .map(PgDatabaseError::code)
                     == Some("3D000")
                 {
-                    let tmp_options = options.clone().database("postgres");
-                    let mut tmp_conn = tmp_options.connect().await?;
-                    sqlx::query(&format!(
-                        "CREATE DATABASE {}",
-                        dsn.database.clone().unwrap_or_default()
-                    ))
-                    .execute(&mut tmp_conn)
-                    .await?;
-                    drop(tmp_conn);
+                    create_postgres_database(options, dsn).await?;
                     let conn = options.connect().await?;
-                    let connect_duration = connect_timer.elapsed().as_secs_f64();
-                    OPERATION_DURATION
-                        .with_label_values(&["postgres", "connect"])
-                        .observe(connect_duration);
-                    // Record TLS handshake duration if TLS is enabled
-                    if tls.mode.is_enabled() {
-                        TLS_HANDSHAKE_DURATION
-                            .with_label_values(&["postgres"])
-                            .observe(connect_duration);
-                    }
-                    conn
+                    record_postgres_connect_metrics(tls, connect_timer);
+                    Ok(conn)
                 } else {
-                    return Err(db_err.into());
+                    Err(db_err.into())
                 }
             } else {
-                return Err(err.into());
+                Err(err.into())
             }
         }
-    };
+    }
+}
 
-    // Set query timeouts to prevent hanging on locked tables
+async fn create_postgres_database(options: &PgConnectOptions, dsn: &DSN) -> Result<()> {
+    let tmp_options = options.clone().database("postgres");
+    let mut tmp_conn = tmp_options.connect().await?;
+    sqlx::query(&format!(
+        "CREATE DATABASE {}",
+        dsn.database.clone().unwrap_or_default()
+    ))
+    .execute(&mut tmp_conn)
+    .await?;
+    Ok(())
+}
+
+async fn set_postgres_session_timeouts(conn: &mut sqlx::PgConnection) -> Result<()> {
     sqlx::query("SET statement_timeout = '5s'")
-        .execute(&mut conn)
+        .execute(&mut *conn)
         .await
         .context("Failed to set statement timeout")?;
     sqlx::query("SET lock_timeout = '2s'")
-        .execute(&mut conn)
+        .execute(&mut *conn)
         .await
         .context("Failed to set lock timeout")?;
+    Ok(())
+}
 
-    // Get database version
+async fn fetch_postgres_health_info(conn: &mut sqlx::PgConnection) -> Result<PostgresHealthInfo> {
     let version: Option<String> = sqlx::query_scalar("SHOW server_version")
-        .fetch_optional(&mut conn)
+        .fetch_optional(&mut *conn)
         .await
         .context("Failed to fetch database version")?;
-
-    // Get backend host serving this connection
     let db_host: Option<String> =
         sqlx::query_scalar("SELECT COALESCE(inet_server_addr()::text, 'local')")
-            .fetch_optional(&mut conn)
+            .fetch_optional(&mut *conn)
             .await
             .ok()
             .flatten();
-
-    // Get database uptime (seconds since postmaster start)
     let uptime_seconds = sqlx::query_scalar::<_, i64>(
         "SELECT EXTRACT(EPOCH FROM NOW() - pg_postmaster_start_time())::bigint",
     )
-    .fetch_optional(&mut conn)
+    .fetch_optional(&mut *conn)
     .await
     .ok()
     .flatten();
 
-    // Query to check if the database is in recovery (read-only)
-    let is_in_recovery: (bool,) = sqlx::query_as("SELECT pg_is_in_recovery();")
-        .fetch_one(&mut conn)
+    Ok(PostgresHealthInfo {
+        version,
+        db_host,
+        uptime_seconds,
+    })
+}
+
+async fn postgres_is_in_recovery(conn: &mut sqlx::PgConnection) -> Result<bool> {
+    let (is_in_recovery,): (bool,) = sqlx::query_as("SELECT pg_is_in_recovery();")
+        .fetch_one(&mut *conn)
         .await?;
+    Ok(is_in_recovery)
+}
 
-    // Also check transaction read-only status
-    let tx_read_only: (String,) = sqlx::query_as("SHOW transaction_read_only;")
-        .fetch_one(&mut conn)
+async fn postgres_transaction_is_read_only(conn: &mut sqlx::PgConnection) -> Result<bool> {
+    let (tx_read_only,): (String,) = sqlx::query_as("SHOW transaction_read_only;")
+        .fetch_one(&mut *conn)
         .await?;
+    Ok(tx_read_only.eq_ignore_ascii_case("on"))
+}
 
-    // Monitor replication lag if this is a replica
-    if is_in_recovery.0 {
-        // Try to get replication lag (in seconds, won't exceed f64 precision)
-        if let Ok(Some(lag_seconds)) = sqlx::query_scalar::<_, f64>(
-            "SELECT EXTRACT(EPOCH FROM (NOW() - pg_last_xact_replay_timestamp()))",
-        )
-        .fetch_optional(&mut conn)
-        .await
-        {
-            REPLICATION_LAG
-                .with_label_values(&["postgres"])
-                .observe(lag_seconds);
-        }
-
-        let tls_metadata = if tls.mode.is_enabled() {
-            extract_tls_metadata(dsn, tls, &mut conn, cert_cache)
-                .await
-                .ok()
-        } else {
-            None
-        };
-        return Ok(HealthCheckResult {
-            version: format!(
-                "{} - Database is in recovery mode",
-                version.unwrap_or_default()
-            ),
-            db_host: db_host.clone(),
-            uptime_seconds,
-            tls_metadata,
-        });
+async fn maybe_record_postgres_replication_lag(conn: &mut sqlx::PgConnection) {
+    if let Ok(Some(lag_seconds)) = sqlx::query_scalar::<_, f64>(
+        "SELECT EXTRACT(EPOCH FROM (NOW() - pg_last_xact_replay_timestamp()))",
+    )
+    .fetch_optional(&mut *conn)
+    .await
+    {
+        REPLICATION_LAG
+            .with_label_values(&["postgres"])
+            .observe(lag_seconds);
     }
+}
 
-    // Check if transaction is read-only (even if not in recovery)
-    if tx_read_only.0.to_lowercase() == "on" {
-        let tls_metadata = if tls.mode.is_enabled() {
-            extract_tls_metadata(dsn, tls, &mut conn, cert_cache)
-                .await
-                .ok()
-        } else {
-            None
-        };
-        return Ok(HealthCheckResult {
-            version: format!(
-                "{} - Transaction read-only mode enabled",
-                version.unwrap_or_default()
-            ),
-            db_host: db_host.clone(),
-            uptime_seconds,
-            tls_metadata,
-        });
-    }
+async fn postgres_read_only_result(
+    dsn: &DSN,
+    tls: &TlsConfig,
+    conn: &mut sqlx::PgConnection,
+    cert_cache: &CertCache,
+    health_info: PostgresHealthInfo,
+    reason: &str,
+) -> Result<HealthCheckResult> {
+    let tls_metadata = maybe_extract_postgres_tls(dsn, tls, conn, cert_cache).await;
+    Ok(HealthCheckResult {
+        version: format!("{} - {reason}", health_info.version.unwrap_or_default()),
+        db_host: health_info.db_host,
+        uptime_seconds: health_info.uptime_seconds,
+        tls_metadata,
+    })
+}
 
-    // Monitor blocking queries
+async fn monitor_postgres_blocking_queries(conn: &mut sqlx::PgConnection) {
     if let Ok(Some(blocking_count)) = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND state = 'active'",
     )
-    .fetch_optional(&mut conn)
+    .fetch_optional(&mut *conn)
     .await
     {
         BLOCKING_QUERIES
             .with_label_values(&["postgres"])
             .set(blocking_count);
     }
+}
 
-    // for UUID - ignore duplicate key error if extension already exists (race condition)
-    if let Err(e) = sqlx::query("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
-        .execute(&mut conn)
+fn is_ignorable_postgres_create_error(error: &sqlx::Error) -> bool {
+    if let sqlx::Error::Database(db_err) = error {
+        db_err.message().contains("duplicate key") || db_err.message().contains("already exists")
+    } else {
+        false
+    }
+}
+
+async fn ensure_postgres_uuid_extension(conn: &mut sqlx::PgConnection) -> Result<()> {
+    if let Err(error) = sqlx::query("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
+        .execute(&mut *conn)
         .await
     {
-        // Ignore duplicate extension errors (42710 or duplicate key constraint)
-        if let sqlx::Error::Database(db_err) = &e {
+        if let sqlx::Error::Database(db_err) = &error {
             let code = db_err
                 .as_error()
                 .downcast_ref::<PgDatabaseError>()
                 .map(PgDatabaseError::code);
-            // 42710 = extension already exists
-            // Also ignore constraint violations from concurrent CREATE EXTENSION
             if code != Some("42710") && !db_err.message().contains("duplicate key") {
-                return Err(e.into());
+                return Err(error.into());
             }
         } else {
-            return Err(e.into());
+            return Err(error.into());
         }
     }
+    Ok(())
+}
 
-    // create table with optimized schema - ignore duplicate errors from concurrent creation
+async fn ensure_postgres_table(conn: &mut sqlx::PgConnection, table_name: &str) -> Result<()> {
     let create_table_sql = format!(
         r"
         CREATE TABLE IF NOT EXISTS {table_name} (
@@ -284,34 +339,35 @@ pub async fn test_rw_with_table(
         )
         "
     );
-
     let create_table_timer = Instant::now();
-    if let Err(e) = sqlx::query(&create_table_sql).execute(&mut conn).await {
-        // Ignore duplicate table/index/constraint errors from concurrent CREATE TABLE
-        if let sqlx::Error::Database(db_err) = &e {
-            if !db_err.message().contains("duplicate key")
-                && !db_err.message().contains("already exists")
-            {
-                return Err(e.into());
-            }
-        } else {
-            return Err(e.into());
-        }
+    if let Err(error) = sqlx::query(&create_table_sql).execute(&mut *conn).await
+        && !is_ignorable_postgres_create_error(&error)
+    {
+        return Err(error.into());
     }
     OPERATION_DURATION
         .with_label_values(&["postgres", "create_table"])
         .observe(create_table_timer.elapsed().as_secs_f64());
 
-    // Create index on t2 for efficient cleanup (only if doesn't exist)
     let create_index_sql =
         format!("CREATE INDEX IF NOT EXISTS idx_{table_name}_t2 ON {table_name}(t2)");
-    sqlx::query(&create_index_sql).execute(&mut conn).await.ok(); // Ignore errors if index exists
+    sqlx::query(&create_index_sql)
+        .execute(&mut *conn)
+        .await
+        .ok();
+    Ok(())
+}
 
-    // write into table
+async fn postgres_insert_and_verify(
+    conn: &mut sqlx::PgConnection,
+    now: DateTime<Utc>,
+    range: u32,
+    table_name: &str,
+) -> Result<u32> {
     let id: u32 = rand::rng().random_range(0..range);
+    let id_i32 = i32::try_from(id).context("generated id out of range for PostgreSQL INT")?;
     let uuid = Uuid::new_v4();
 
-    // SQL Query
     let insert_sql = format!(
         r"
         INSERT INTO {table_name} (id, t1, uuid)
@@ -322,10 +378,10 @@ pub async fn test_rw_with_table(
     );
     let insert_timer = Instant::now();
     let insert_result = sqlx::query(&insert_sql)
-        .bind(id as i32)
+        .bind(id_i32)
         .bind(now.timestamp())
         .bind(uuid)
-        .execute(&mut conn) // Ensure we're using PgConnection here
+        .execute(&mut *conn)
         .await?;
     OPERATION_DURATION
         .with_label_values(&["postgres", "insert"])
@@ -334,24 +390,16 @@ pub async fn test_rw_with_table(
         .with_label_values(&["postgres", "insert"])
         .inc_by(insert_result.rows_affected());
 
-    // Check if stored record matches
-    let select_sql = format!(
-        r"
-        SELECT t1, uuid
-        FROM {table_name}
-        WHERE id = $1
-        "
-    );
+    let select_sql = format!("SELECT t1, uuid FROM {table_name} WHERE id = $1");
     let select_timer = Instant::now();
     let row: Option<(i64, Uuid)> = sqlx::query_as(&select_sql)
-        .bind(id as i32)
-        .fetch_optional(&mut conn)
+        .bind(id_i32)
+        .fetch_optional(&mut *conn)
         .await?;
     OPERATION_DURATION
         .with_label_values(&["postgres", "select"])
         .observe(select_timer.elapsed().as_secs_f64());
 
-    // Ensure the row exists and matches
     let (t1, v4) = row.context("Expected records")?;
     if now.timestamp() != t1 || uuid != v4 {
         return Err(anyhow!(
@@ -363,14 +411,20 @@ pub async fn test_rw_with_table(
         ));
     }
 
-    // Test transaction rollback with a unique ID to avoid conflicts with parallel tests
-    // Use timestamp-based ID that won't conflict with normal operations
-    let rollback_test_id = (now.timestamp_micros() % 2_147_483_647) as i32;
+    Ok(id)
+}
+
+async fn postgres_transaction_rollback_test(
+    conn: &mut sqlx::PgConnection,
+    now: DateTime<Utc>,
+    table_name: &str,
+) -> Result<()> {
+    let rollback_seed = now.timestamp_micros().rem_euclid(i64::from(i32::MAX));
+    let rollback_test_id =
+        i32::try_from(rollback_seed).context("rollback test id out of range for PostgreSQL INT")?;
 
     let transaction_timer = Instant::now();
     let mut tx = conn.begin().await?;
-
-    // Insert a test record
     let insert_tx_sql = format!(
         "INSERT INTO {table_name} (id, t1, uuid) VALUES ($1, 999, UUID_GENERATE_V4()) ON CONFLICT (id) DO UPDATE SET t1 = 999"
     );
@@ -379,7 +433,6 @@ pub async fn test_rw_with_table(
         .execute(tx.as_mut())
         .await?;
 
-    // Update it within the transaction
     let update_tx_sql = format!("UPDATE {table_name} SET t1 = $1 WHERE id = $2");
     sqlx::query(&update_tx_sql)
         .bind(0)
@@ -387,44 +440,39 @@ pub async fn test_rw_with_table(
         .execute(tx.as_mut())
         .await?;
 
-    // Verify the update
     let select_tx_sql = format!("SELECT t1 FROM {table_name} WHERE id = $1");
     let updated_value: Option<i64> = sqlx::query_scalar(&select_tx_sql)
         .bind(rollback_test_id)
         .fetch_optional(tx.as_mut())
         .await?;
-
     if updated_value != Some(0) {
         return Err(anyhow!(
             "Transaction update failed: expected 0, got {updated_value:?}"
         ));
     }
-
-    // Roll back this transaction
     tx.rollback().await?;
 
-    // Verify the rollback worked (value should be 999 or record not exist)
     let select_rollback_sql = format!("SELECT t1 FROM {table_name} WHERE id = $1");
     let rolled_back_value: Option<i64> = sqlx::query_scalar(&select_rollback_sql)
         .bind(rollback_test_id)
-        .fetch_optional(&mut conn)
+        .fetch_optional(&mut *conn)
         .await?;
-
     if rolled_back_value == Some(0) {
         return Err(anyhow!("Transaction rollback failed: value is still 0"));
     }
+
     OPERATION_DURATION
         .with_label_values(&["postgres", "transaction_test"])
         .observe(transaction_timer.elapsed().as_secs_f64());
+    Ok(())
+}
 
-    // Cleanup strategy: Remove old records to prevent unbounded growth
-    // Delete records older than 1 hour (keeps table size bounded)
-    // Use LIMIT to avoid long-running DELETE operations that could block other queries
+async fn postgres_cleanup_old_records(conn: &mut sqlx::PgConnection, table_name: &str) {
     let delete_old_sql = format!(
         "DELETE FROM {table_name} WHERE id IN (SELECT id FROM {table_name} WHERE t2 < NOW() - INTERVAL '1 hour' LIMIT 10000)"
     );
     let cleanup_timer = Instant::now();
-    if let Ok(delete_result) = sqlx::query(&delete_old_sql).execute(&mut conn).await {
+    if let Ok(delete_result) = sqlx::query(&delete_old_sql).execute(&mut *conn).await {
         ROWS_AFFECTED
             .with_label_values(&["postgres", "delete"])
             .inc_by(delete_result.rows_affected());
@@ -432,45 +480,47 @@ pub async fn test_rw_with_table(
     OPERATION_DURATION
         .with_label_values(&["postgres", "cleanup"])
         .observe(cleanup_timer.elapsed().as_secs_f64());
+}
 
-    // Query approximate table row count (faster than COUNT(*) for large tables)
-    // Use pg_class.reltuples for quick estimate with schema qualification
+async fn update_postgres_table_rows_metric(conn: &mut sqlx::PgConnection, table_name: &str) {
     let row_count_sql = format!(
         "SELECT c.reltuples::bigint FROM pg_class c \
          JOIN pg_namespace n ON c.relnamespace = n.oid \
          WHERE c.relname = '{table_name}' AND n.nspname = CURRENT_SCHEMA()"
     );
     if let Ok(Some(row_count)) = sqlx::query_scalar::<_, i64>(&row_count_sql)
-        .fetch_optional(&mut conn)
+        .fetch_optional(&mut *conn)
         .await
     {
         TABLE_ROWS
             .with_label_values(&["postgres", table_name])
             .set(row_count);
     }
+}
 
-    // Periodic full table drop: probabilistic cleanup at minute 0 of each hour
-    // Only drops when id < 5 (5/range probability) to avoid all instances dropping simultaneously
-    // This ensures table is recreated fresh periodically without coordination between instances
+async fn maybe_drop_postgres_table_hourly(
+    conn: &mut sqlx::PgConnection,
+    now: DateTime<Utc>,
+    id: u32,
+    table_name: &str,
+) {
     if now.minute() == 0 && id < 5 {
-        // Use exact count for drop decision
         let count_sql = format!("SELECT COUNT(*) FROM {table_name}");
         if let Ok(Some(exact_count)) = sqlx::query_scalar::<_, i64>(&count_sql)
-            .fetch_optional(&mut conn)
+            .fetch_optional(&mut *conn)
             .await
+            && exact_count < 100_000
         {
-            // Only drop if table is relatively small to avoid disrupting active monitoring
-            if exact_count < 100_000 {
-                let drop_table_sql = format!("DROP TABLE IF EXISTS {table_name}");
-                sqlx::query(&drop_table_sql).execute(&mut conn).await.ok();
-            }
+            let drop_table_sql = format!("DROP TABLE IF EXISTS {table_name}");
+            sqlx::query(&drop_table_sql).execute(&mut *conn).await.ok();
         }
     }
+}
 
-    // Query table size in bytes (optional, but useful for monitoring)
+async fn update_postgres_size_metrics(conn: &mut sqlx::PgConnection, table_name: &str) {
     let size_sql = format!("SELECT pg_total_relation_size('{table_name}')");
     if let Ok(Some(table_bytes)) = sqlx::query_scalar::<_, i64>(&size_sql)
-        .fetch_optional(&mut conn)
+        .fetch_optional(&mut *conn)
         .await
     {
         TABLE_SIZE_BYTES
@@ -478,36 +528,28 @@ pub async fn test_rw_with_table(
             .set(table_bytes);
     }
 
-    // Query total database size in bytes
     if let Ok(Some(db_size)) =
         sqlx::query_scalar::<_, i64>("SELECT pg_database_size(current_database())")
-            .fetch_optional(&mut conn)
+            .fetch_optional(&mut *conn)
             .await
     {
         DATABASE_SIZE_BYTES
             .with_label_values(&["postgres"])
             .set(db_size);
     }
+}
 
-    // Extract TLS metadata if TLS is enabled
-    let tls_metadata = if tls.mode.is_enabled() {
-        extract_tls_metadata(dsn, tls, &mut conn, cert_cache)
-            .await
-            .ok()
+async fn maybe_extract_postgres_tls(
+    dsn: &DSN,
+    tls: &TlsConfig,
+    conn: &mut sqlx::PgConnection,
+    cert_cache: &CertCache,
+) -> Option<TlsMetadata> {
+    if tls.mode.is_enabled() {
+        extract_tls_metadata(dsn, tls, conn, cert_cache).await.ok()
     } else {
         None
-    };
-
-    // Gracefully close connection to avoid "Connection reset by peer" errors in server logs
-    let _ = conn.close().await;
-    CONNECTION_DURATION.observe(conn_start.elapsed().as_secs_f64());
-
-    Ok(HealthCheckResult {
-        version: version.context("Expected database version")?,
-        db_host,
-        uptime_seconds,
-        tls_metadata,
-    })
+    }
 }
 
 /// Extract TLS metadata from `PostgreSQL` connection

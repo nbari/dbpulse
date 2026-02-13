@@ -24,7 +24,7 @@ pub async fn start() -> Result<()> {
     // telemetry::init(verbosity)?;
 
     // 4. Dispatch: Convert ArgMatches into typed Action enum
-    let action = dispatch::dispatch(matches)?;
+    let action = dispatch::dispatch(&matches)?;
 
     // 5. Execute: Run the action's business logic
     action.execute().await?;

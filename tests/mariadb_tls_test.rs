@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 /// MariaDB/MySQL TLS Integration Tests
 ///
 /// These tests verify TLS connectivity with `MariaDB` using self-signed certificates.
