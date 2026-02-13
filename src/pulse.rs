@@ -1,8 +1,8 @@
 use crate::{
     metrics::{
-        DATABASE_UPTIME_SECONDS, DATABASE_VERSION_INFO, DB_ERRORS, DB_READONLY, ITERATIONS_TOTAL,
-        LAST_RUNTIME_MS, LAST_SUCCESS, PANICS_RECOVERED, PULSE, RUNTIME, TLS_CERT_EXPIRY_DAYS,
-        TLS_CONNECTION_ERRORS, TLS_INFO, encode_metrics,
+        DATABASE_HOST_INFO, DATABASE_UPTIME_SECONDS, DATABASE_VERSION_INFO, DB_ERRORS, DB_READONLY,
+        ITERATIONS_TOTAL, LAST_RUNTIME_MS, LAST_SUCCESS, PANICS_RECOVERED, PULSE, RUNTIME,
+        TLS_CERT_EXPIRY_DAYS, TLS_CONNECTION_ERRORS, TLS_INFO, encode_metrics,
     },
     queries::{mysql, postgres},
     tls::{TlsConfig, cache::CertCache},
@@ -143,6 +143,62 @@ fn is_tls_error(error: &anyhow::Error) -> bool {
         || error_str.contains("Certificate")
 }
 
+#[inline]
+fn is_database_read_only(db: &str, version: &str) -> bool {
+    match db {
+        // PostgreSQL replicas report recovery mode in version string.
+        "postgres" | "postgresql" => {
+            version.contains("recovery mode") || version.contains("read-only")
+        }
+        _ => version.contains("read-only"),
+    }
+}
+
+#[inline]
+fn update_database_version_metric(
+    database: &str,
+    version: &str,
+    last_version: &mut Option<String>,
+) {
+    if let Some(previous_version) = last_version.as_deref()
+        && previous_version != version
+    {
+        let _ = DATABASE_VERSION_INFO.remove_label_values(&[database, previous_version]);
+    }
+
+    DATABASE_VERSION_INFO
+        .with_label_values(&[database, version])
+        .set(1);
+
+    *last_version = Some(version.to_string());
+}
+
+#[inline]
+fn update_database_host_metric(database: &str, host: Option<&str>, last_host: &mut Option<String>) {
+    if let Some(previous_host) = last_host.as_deref()
+        && Some(previous_host) != host
+    {
+        let _ = DATABASE_HOST_INFO.remove_label_values(&[database, previous_host]);
+    }
+
+    if let Some(current_host) = host {
+        DATABASE_HOST_INFO
+            .with_label_values(&[database, current_host])
+            .set(1);
+        *last_host = Some(current_host.to_string());
+    } else {
+        *last_host = None;
+    }
+}
+
+#[inline]
+fn remaining_sleep_duration(wait_time: Duration, runtime: Duration) -> Option<time::Duration> {
+    wait_time
+        .checked_sub(&runtime)
+        .and_then(|remaining| remaining.to_std().ok())
+        .filter(|duration| !duration.is_zero())
+}
+
 #[allow(clippy::too_many_lines)]
 async fn run_loop(
     dsn: DSN,
@@ -152,6 +208,9 @@ async fn run_loop(
     cert_cache: Arc<CertCache>,
     tx: mpsc::UnboundedSender<()>,
 ) {
+    let mut last_version_label: Option<String> = None;
+    let mut last_host_label: Option<String> = None;
+
     loop {
         // Catch panics in individual iterations to keep loop alive
         let iteration_result = std::panic::AssertUnwindSafe(async {
@@ -171,22 +230,18 @@ async fn run_loop(
                         Ok(result) => {
                             result.version.clone_into(&mut pulse.version);
                             pulse.uptime_seconds = result.uptime_seconds;
-                            PULSE.set(1);
-
-                            // Record successful iteration
-                            ITERATIONS_TOTAL
-                                .with_label_values(&["postgres", "success"])
-                                .inc();
-
-                            // Record last success timestamp
-                            LAST_SUCCESS
-                                .with_label_values(&["postgres"])
-                                .set(now.timestamp());
 
                             // Record database version and uptime
-                            DATABASE_VERSION_INFO
-                                .with_label_values(&["postgres", result.version.as_str()])
-                                .set(1);
+                            update_database_version_metric(
+                                "postgres",
+                                result.version.as_str(),
+                                &mut last_version_label,
+                            );
+                            update_database_host_metric(
+                                "postgres",
+                                result.db_host.as_deref(),
+                                &mut last_host_label,
+                            );
                             if let Some(uptime) = result.uptime_seconds {
                                 DATABASE_UPTIME_SECONDS
                                     .with_label_values(&["postgres"])
@@ -194,12 +249,28 @@ async fn run_loop(
                             }
 
                             // Check for read-only mode
-                            if result.version.contains("recovery mode")
-                                || result.version.contains("read-only")
-                            {
+                            let is_read_only = is_database_read_only("postgres", &result.version);
+                            if is_read_only {
                                 DB_READONLY.with_label_values(&["postgres"]).set(1);
+                                // Pulse must represent full read/write health.
+                                PULSE.set(0);
+                                ITERATIONS_TOTAL
+                                    .with_label_values(&["postgres", "error"])
+                                    .inc();
+                                DB_ERRORS.with_label_values(&["postgres", "query"]).inc();
                             } else {
                                 DB_READONLY.with_label_values(&["postgres"]).set(0);
+                                PULSE.set(1);
+
+                                // Record successful iteration
+                                ITERATIONS_TOTAL
+                                    .with_label_values(&["postgres", "success"])
+                                    .inc();
+
+                                // Record last success timestamp
+                                LAST_SUCCESS
+                                    .with_label_values(&["postgres"])
+                                    .set(now.timestamp());
                             }
 
                             // Record TLS metrics if available
@@ -231,6 +302,7 @@ async fn run_loop(
                         Err(e) => {
                             PULSE.set(0);
                             eprintln!("{e}");
+                            update_database_host_metric("postgres", None, &mut last_host_label);
 
                             // Record failed iteration
                             ITERATIONS_TOTAL
@@ -270,22 +342,18 @@ async fn run_loop(
                     Ok(result) => {
                         result.version.clone_into(&mut pulse.version);
                         pulse.uptime_seconds = result.uptime_seconds;
-                        PULSE.set(1);
-
-                        // Record successful iteration
-                        ITERATIONS_TOTAL
-                            .with_label_values(&["mysql", "success"])
-                            .inc();
-
-                        // Record last success timestamp
-                        LAST_SUCCESS
-                            .with_label_values(&["mysql"])
-                            .set(now.timestamp());
 
                         // Record database version and uptime
-                        DATABASE_VERSION_INFO
-                            .with_label_values(&["mysql", result.version.as_str()])
-                            .set(1);
+                        update_database_version_metric(
+                            "mysql",
+                            result.version.as_str(),
+                            &mut last_version_label,
+                        );
+                        update_database_host_metric(
+                            "mysql",
+                            result.db_host.as_deref(),
+                            &mut last_host_label,
+                        );
                         if let Some(uptime) = result.uptime_seconds {
                             DATABASE_UPTIME_SECONDS
                                 .with_label_values(&["mysql"])
@@ -293,10 +361,28 @@ async fn run_loop(
                         }
 
                         // Check for read-only mode
-                        if result.version.contains("read-only") {
+                        let is_read_only = is_database_read_only("mysql", &result.version);
+                        if is_read_only {
                             DB_READONLY.with_label_values(&["mysql"]).set(1);
+                            // Pulse must represent full read/write health.
+                            PULSE.set(0);
+                            ITERATIONS_TOTAL
+                                .with_label_values(&["mysql", "error"])
+                                .inc();
+                            DB_ERRORS.with_label_values(&["mysql", "query"]).inc();
                         } else {
                             DB_READONLY.with_label_values(&["mysql"]).set(0);
+                            PULSE.set(1);
+
+                            // Record successful iteration
+                            ITERATIONS_TOTAL
+                                .with_label_values(&["mysql", "success"])
+                                .inc();
+
+                            // Record last success timestamp
+                            LAST_SUCCESS
+                                .with_label_values(&["mysql"])
+                                .set(now.timestamp());
                         }
 
                         // Record TLS metrics if available
@@ -326,6 +412,7 @@ async fn run_loop(
                     Err(e) => {
                         PULSE.set(0);
                         eprintln!("{e}");
+                        update_database_host_metric("mysql", None, &mut last_host_label);
 
                         // Record failed iteration
                         ITERATIONS_TOTAL
@@ -388,12 +475,8 @@ async fn run_loop(
             }
 
             // Sleep for remaining interval time to maintain fixed interval
-            if let Some(remaining) = wait_time.checked_sub(&runtime) {
-                #[allow(clippy::cast_sign_loss)]
-                let seconds_to_wait = remaining.num_seconds().max(0) as u64;
-                if seconds_to_wait > 0 {
-                    time::sleep(time::Duration::from_secs(seconds_to_wait)).await;
-                }
+            if let Some(remaining) = remaining_sleep_duration(wait_time, runtime) {
+                time::sleep(remaining).await;
             }
         })
         .catch_unwind()
@@ -461,6 +544,224 @@ mod tests {
 
         let error = anyhow!("Database not found");
         assert!(!is_tls_error(&error));
+    }
+
+    #[test]
+    fn test_is_database_read_only_postgres_recovery() {
+        assert!(is_database_read_only(
+            "postgres",
+            "PostgreSQL 16.0 - Database is in recovery mode",
+        ));
+    }
+
+    #[test]
+    fn test_is_database_read_only_postgres_read_only_text() {
+        assert!(is_database_read_only(
+            "postgres",
+            "PostgreSQL 16.0 - Transaction read-only mode enabled",
+        ));
+    }
+
+    #[test]
+    fn test_is_database_read_only_mysql() {
+        assert!(is_database_read_only(
+            "mysql",
+            "MariaDB 11.4.5 - Database is in read-only mode",
+        ));
+        assert!(!is_database_read_only("mysql", "MariaDB 11.4.5"));
+    }
+
+    #[test]
+    fn test_is_database_read_only_writable() {
+        assert!(!is_database_read_only("postgres", "PostgreSQL 16.0"));
+    }
+
+    fn version_metric_exists(database: &str, version: &str) -> bool {
+        crate::metrics::REGISTRY.gather().into_iter().any(|family| {
+            family.name() == "dbpulse_database_version_info"
+                && family.get_metric().iter().any(|metric| {
+                    let labels = metric.get_label();
+                    labels
+                        .iter()
+                        .any(|lp| lp.name() == "database" && lp.value() == database)
+                        && labels
+                            .iter()
+                            .any(|lp| lp.name() == "version" && lp.value() == version)
+                })
+        })
+    }
+
+    fn version_metric_count_for_database(database: &str) -> usize {
+        crate::metrics::REGISTRY
+            .gather()
+            .into_iter()
+            .find(|family| family.name() == "dbpulse_database_version_info")
+            .map_or(0, |family| {
+                family
+                    .get_metric()
+                    .iter()
+                    .filter(|metric| {
+                        metric
+                            .get_label()
+                            .iter()
+                            .any(|lp| lp.name() == "database" && lp.value() == database)
+                    })
+                    .count()
+            })
+    }
+
+    fn host_metric_exists(database: &str, host: &str) -> bool {
+        crate::metrics::REGISTRY.gather().into_iter().any(|family| {
+            family.name() == "dbpulse_database_host_info"
+                && family.get_metric().iter().any(|metric| {
+                    let labels = metric.get_label();
+                    labels
+                        .iter()
+                        .any(|lp| lp.name() == "database" && lp.value() == database)
+                        && labels
+                            .iter()
+                            .any(|lp| lp.name() == "host" && lp.value() == host)
+                })
+        })
+    }
+
+    fn host_metric_count_for_database(database: &str) -> usize {
+        crate::metrics::REGISTRY
+            .gather()
+            .into_iter()
+            .find(|family| family.name() == "dbpulse_database_host_info")
+            .map_or(0, |family| {
+                family
+                    .get_metric()
+                    .iter()
+                    .filter(|metric| {
+                        metric
+                            .get_label()
+                            .iter()
+                            .any(|lp| lp.name() == "database" && lp.value() == database)
+                    })
+                    .count()
+            })
+    }
+
+    #[test]
+    fn test_update_database_version_metric_replaces_old_version_label() {
+        let database = "test-version-transition";
+        let v1 = "MariaDB 11.4.5 - Database is in read-only mode";
+        let v2 = "MariaDB 11.4.5";
+        let mut last_version = None;
+
+        update_database_version_metric(database, v1, &mut last_version);
+        assert!(version_metric_exists(database, v1));
+        assert_eq!(version_metric_count_for_database(database), 1);
+
+        update_database_version_metric(database, v2, &mut last_version);
+        assert!(version_metric_exists(database, v2));
+        assert!(!version_metric_exists(database, v1));
+        assert_eq!(version_metric_count_for_database(database), 1);
+    }
+
+    #[test]
+    fn test_update_database_version_metric_same_version_keeps_single_series() {
+        let database = "test-version-same";
+        let version = "PostgreSQL 16.3";
+        let mut last_version = None;
+
+        update_database_version_metric(database, version, &mut last_version);
+        update_database_version_metric(database, version, &mut last_version);
+
+        assert!(version_metric_exists(database, version));
+        assert_eq!(version_metric_count_for_database(database), 1);
+    }
+
+    #[test]
+    fn test_update_database_host_metric_replaces_old_host_label() {
+        let database = "test-host-transition";
+        let h1 = "db-a";
+        let h2 = "db-b";
+        let mut last_host = None;
+
+        update_database_host_metric(database, Some(h1), &mut last_host);
+        assert!(host_metric_exists(database, h1));
+        assert_eq!(host_metric_count_for_database(database), 1);
+
+        update_database_host_metric(database, Some(h2), &mut last_host);
+        assert!(host_metric_exists(database, h2));
+        assert!(!host_metric_exists(database, h1));
+        assert_eq!(host_metric_count_for_database(database), 1);
+    }
+
+    #[test]
+    fn test_update_database_host_metric_same_host_keeps_single_series() {
+        let database = "test-host-same";
+        let host = "db-primary";
+        let mut last_host = None;
+
+        update_database_host_metric(database, Some(host), &mut last_host);
+        update_database_host_metric(database, Some(host), &mut last_host);
+
+        assert!(host_metric_exists(database, host));
+        assert_eq!(host_metric_count_for_database(database), 1);
+    }
+
+    #[test]
+    fn test_update_database_host_metric_none_clears_previous_label() {
+        let database = "test-host-clear";
+        let host = "db-primary";
+        let mut last_host = None;
+
+        update_database_host_metric(database, Some(host), &mut last_host);
+        assert!(host_metric_exists(database, host));
+
+        update_database_host_metric(database, None, &mut last_host);
+        assert!(!host_metric_exists(database, host));
+        assert_eq!(host_metric_count_for_database(database), 0);
+    }
+
+    #[test]
+    fn test_remaining_sleep_duration_preserves_subsecond_interval() {
+        let wait_time = Duration::seconds(1);
+        let runtime = Duration::milliseconds(250);
+
+        let remaining = remaining_sleep_duration(wait_time, runtime).unwrap();
+        assert_eq!(remaining, std::time::Duration::from_millis(750));
+    }
+
+    #[test]
+    fn test_remaining_sleep_duration_one_millisecond_remainder() {
+        // Regression test for `-i 1`: runtime just under 1s must still sleep.
+        let wait_time = Duration::seconds(1);
+        let runtime = Duration::milliseconds(999);
+
+        let remaining = remaining_sleep_duration(wait_time, runtime).unwrap();
+        assert_eq!(remaining, std::time::Duration::from_millis(1));
+    }
+
+    #[test]
+    fn test_remaining_sleep_duration_subsecond_remainder_for_longer_interval() {
+        let wait_time = Duration::seconds(2);
+        let runtime = Duration::milliseconds(1500);
+
+        let remaining = remaining_sleep_duration(wait_time, runtime).unwrap();
+        assert_eq!(remaining, std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_remaining_sleep_duration_none_when_runtime_exceeds_interval() {
+        let wait_time = Duration::seconds(1);
+        let runtime = Duration::milliseconds(1200);
+
+        let remaining = remaining_sleep_duration(wait_time, runtime);
+        assert!(remaining.is_none());
+    }
+
+    #[test]
+    fn test_remaining_sleep_duration_none_when_runtime_matches_interval() {
+        let wait_time = Duration::seconds(1);
+        let runtime = Duration::seconds(1);
+
+        let remaining = remaining_sleep_duration(wait_time, runtime);
+        assert!(remaining.is_none());
     }
 
     #[test]

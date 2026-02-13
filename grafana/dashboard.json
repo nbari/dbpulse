@@ -324,8 +324,9 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
+          "instant": true,
           "expr": "dbpulse_database_version_info{job=\"$job\", instance=\"$instance\"}",
-          "legendFormat": "{{database}} \u2022 {{version}}",
+          "legendFormat": "{{database}} • {{version}}",
           "refId": "A"
         }
       ],
@@ -625,31 +626,32 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Error rate over the last 5 minutes across authentication, timeout, connection and query failures.",
+      "description": "Current backend database host serving connections. Useful during VIP failover to confirm which node is active.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "mode": "fixed"
           },
-          "mappings": [],
+          "mappings": [
+            {
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "No data"
+                }
+              },
+              "type": "special"
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
                 "value": 0
-              },
-              {
-                "color": "yellow",
-                "value": 0.1
-              },
-              {
-                "color": "red",
-                "value": 1
               }
             ]
-          },
-          "unit": "short"
+          }
         },
         "overrides": []
       },
@@ -661,7 +663,7 @@
       },
       "id": 23,
       "options": {
-        "colorMode": "value",
+        "colorMode": "none",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -674,7 +676,7 @@
           "values": false
         },
         "showPercentChange": false,
-        "textMode": "value_and_name",
+        "textMode": "name",
         "wideLayout": true
       },
       "pluginVersion": "12.2.1",
@@ -684,12 +686,13 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_errors_total{job=\"$job\", instance=\"$instance\"}[5m])",
-          "legendFormat": "{{database}}",
-          "refId": "A"
+          "expr": "dbpulse_database_host_info{job=\"$job\", instance=\"$instance\"}",
+          "legendFormat": "{{host}}",
+          "refId": "A",
+          "instant": true
         }
       ],
-      "title": "Error Rate (5m)",
+      "title": "Database Host",
       "type": "stat"
     },
     {

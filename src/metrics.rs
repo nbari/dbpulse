@@ -95,6 +95,18 @@ pub static DATABASE_VERSION_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     .expect("metric can be created")
 });
 
+pub static DATABASE_HOST_INFO: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    register_int_gauge_vec_with_registry!(
+        opts!(
+            "dbpulse_database_host_info",
+            "Database host currently serving the connection (value is always 1)"
+        ),
+        &["database", "host"],
+        &REGISTRY
+    )
+    .expect("metric can be created")
+});
+
 pub static DATABASE_UPTIME_SECONDS: LazyLock<IntGaugeVec> = LazyLock::new(|| {
     register_int_gauge_vec_with_registry!(
         opts!(
@@ -335,6 +347,9 @@ mod tests {
         TLS_CERT_PROBE_ERRORS
             .with_label_values(&["postgres", "handshake"])
             .inc();
+        DATABASE_HOST_INFO
+            .with_label_values(&["mysql", "db-node-a"])
+            .set(1);
     }
 
     #[test]
@@ -390,6 +405,9 @@ mod tests {
         OPERATION_DURATION
             .with_label_values(&["test", "test"])
             .observe(0.1);
+        DATABASE_HOST_INFO
+            .with_label_values(&["test", "db-1"])
+            .set(1);
 
         // Test that registry can gather metrics
         let metrics = REGISTRY.gather();
@@ -403,6 +421,7 @@ mod tests {
         assert!(metric_names.contains(&"dbpulse_runtime".to_string()));
         assert!(metric_names.contains(&"dbpulse_errors_total".to_string()));
         assert!(metric_names.contains(&"dbpulse_operation_duration_seconds".to_string()));
+        assert!(metric_names.contains(&"dbpulse_database_host_info".to_string()));
     }
 
     #[test]

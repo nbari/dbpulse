@@ -172,6 +172,13 @@ pub async fn test_rw_with_table(
         .await
         .context("Failed to fetch database version")?;
 
+    // Get backend host serving this connection
+    let db_host: Option<String> = sqlx::query_scalar("SELECT @@hostname")
+        .fetch_optional(&mut conn)
+        .await
+        .ok()
+        .flatten();
+
     // Get database uptime (SHOW GLOBAL STATUS LIKE 'Uptime')
     let uptime_seconds = sqlx::query("SHOW GLOBAL STATUS LIKE 'Uptime'")
         .fetch_optional(&mut conn)
@@ -232,6 +239,7 @@ pub async fn test_rw_with_table(
                 "{} - Database is in read-only mode",
                 version.unwrap_or_default()
             ),
+            db_host: db_host.clone(),
             uptime_seconds,
             tls_metadata,
         });
@@ -503,6 +511,7 @@ pub async fn test_rw_with_table(
 
     Ok(HealthCheckResult {
         version: version.context("Expected database version")?,
+        db_host,
         uptime_seconds,
         tls_metadata,
     })

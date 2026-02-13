@@ -142,6 +142,95 @@ jobs:
         env:
           RUST_BACKTRACE: 1
 
+  failover-transition-test:
+    name: Failover Transition Tests
+    runs-on: ubuntu-latest
+    needs:
+      - format
+      - lint
+      - check
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install database clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client mariadb-client
+
+      - name: Start failover test databases
+        run: |
+          docker rm -f dbpulse-postgres dbpulse-mariadb 2>/dev/null || true
+
+          docker run -d --name dbpulse-postgres \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=secret \
+            -e POSTGRES_DB=testdb \
+            -p 5432:5432 postgres:latest
+
+          docker run -d --name dbpulse-mariadb \
+            -e MARIADB_USER=dbpulse \
+            -e MARIADB_PASSWORD=secret \
+            -e MARIADB_ROOT_PASSWORD=secret \
+            -e MARIADB_DATABASE=testdb \
+            -p 3306:3306 mariadb:latest
+
+      - name: Wait for failover test databases
+        run: |
+          echo "Waiting for PostgreSQL..."
+          for i in {1..30}; do
+            if docker exec dbpulse-postgres pg_isready -U postgres > /dev/null 2>&1; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "PostgreSQL did not become ready in time"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "Waiting for MariaDB..."
+          for i in {1..30}; do
+            if docker exec dbpulse-mariadb mariadb -u dbpulse -psecret -D testdb -e "SELECT 1" > /dev/null 2>&1; then
+              echo "MariaDB is ready!"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "MariaDB did not become ready in time"
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Run PostgreSQL failover transition test
+        run: cargo test --test postgres_test test_postgres_pulse_transition_stop_start -- --ignored --nocapture --test-threads=1
+        env:
+          RUN_FAILOVER_TRANSITION_TESTS: "1"
+          RUST_BACKTRACE: 1
+
+      - name: Run MariaDB failover transition test
+        run: cargo test --test mariadb_test test_mariadb_pulse_transition_stop_start -- --ignored --nocapture --test-threads=1
+        env:
+          RUN_FAILOVER_TRANSITION_TESTS: "1"
+          RUST_BACKTRACE: 1
+
+      - name: Show database logs on failure
+        if: failure()
+        run: |
+          echo "==> PostgreSQL logs:"
+          docker logs dbpulse-postgres || true
+          echo ""
+          echo "==> MariaDB logs:"
+          docker logs dbpulse-mariadb || true
+
+      - name: Cleanup failover test databases
+        if: always()
+        run: |
+          docker stop dbpulse-postgres dbpulse-mariadb || true
+          docker rm dbpulse-postgres dbpulse-mariadb || true
+
   integration-test-tls:
     name: Integration Tests with TLS
     runs-on: ubuntu-latest
