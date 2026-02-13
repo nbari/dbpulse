@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 /// `PostgreSQL` TLS Integration Tests
 ///
 /// These tests verify TLS connectivity with `PostgreSQL` using self-signed certificates.

@@ -58,8 +58,7 @@ fn extract_tls_config(dsn: &DSN) -> TlsConfig {
 /// # Errors
 ///
 /// Returns an error if the DSN is invalid or required parameters are missing
-#[allow(clippy::needless_pass_by_value)]
-pub fn dispatch(matches: ArgMatches) -> Result<Action> {
+pub fn dispatch(matches: &ArgMatches) -> Result<Action> {
     // Extract DSN
     let dsn_str = matches
         .get_one::<String>("dsn")
@@ -99,6 +98,8 @@ pub fn dispatch(matches: ArgMatches) -> Result<Action> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
     use super::*;
     use crate::cli::commands;
 
@@ -109,7 +110,7 @@ mod tests {
             .try_get_matches_from(vec!["dbpulse", "--dsn", "mysql://user:pass@localhost/db"])
             .unwrap();
 
-        let action = dispatch(matches).unwrap();
+        let action = dispatch(&matches).unwrap();
         match action {
             Action::Monitor {
                 dsn,
@@ -146,7 +147,7 @@ mod tests {
             ])
             .unwrap();
 
-        let action = dispatch(matches).unwrap();
+        let action = dispatch(&matches).unwrap();
         match action {
             Action::Monitor {
                 dsn,
@@ -183,7 +184,7 @@ mod tests {
             ])
             .unwrap();
 
-        let action = dispatch(matches).unwrap();
+        let action = dispatch(&matches).unwrap();
         match action {
             Action::Monitor {
                 dsn,
@@ -218,7 +219,7 @@ mod tests {
             ])
             .unwrap();
 
-        let action = dispatch(matches).unwrap();
+        let action = dispatch(&matches).unwrap();
         match action {
             Action::Monitor {
                 dsn,
@@ -251,7 +252,7 @@ mod tests {
             ])
             .unwrap();
 
-        let action = dispatch(matches).unwrap();
+        let action = dispatch(&matches).unwrap();
         match action {
             Action::Monitor {
                 dsn,
@@ -282,7 +283,7 @@ mod tests {
             ])
             .unwrap();
 
-        let action = dispatch(matches).unwrap();
+        let action = dispatch(&matches).unwrap();
         match action {
             Action::Monitor {
                 dsn,
@@ -310,7 +311,7 @@ mod tests {
             ])
             .unwrap();
 
-        let action = dispatch(matches).unwrap();
+        let action = dispatch(&matches).unwrap();
         match action {
             Action::Monitor {
                 dsn,
@@ -340,7 +341,7 @@ mod tests {
             ])
             .unwrap();
 
-        let action = dispatch(matches).unwrap();
+        let action = dispatch(&matches).unwrap();
         match action {
             Action::Monitor {
                 dsn,
@@ -370,7 +371,7 @@ mod tests {
             ])
             .unwrap();
 
-        let result = dispatch(matches);
+        let result = dispatch(&matches);
         assert!(result.is_err());
         assert!(
             result

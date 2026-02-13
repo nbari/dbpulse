@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 /// Comprehensive Robustness Tests for dbpulse Monitoring Loop
 ///
 /// This test suite validates the critical robustness features implemented in pulse.rs:

@@ -4,7 +4,7 @@ use crate::{
         ITERATIONS_TOTAL, LAST_RUNTIME_MS, LAST_SUCCESS, PANICS_RECOVERED, PULSE, RUNTIME,
         TLS_CERT_EXPIRY_DAYS, TLS_CONNECTION_ERRORS, TLS_INFO, encode_metrics,
     },
-    queries::{mysql, postgres},
+    queries::{HealthCheckResult, mysql, postgres},
     tls::{TlsConfig, cache::CertCache},
 };
 use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
@@ -199,7 +199,179 @@ fn remaining_sleep_duration(wait_time: Duration, runtime: Duration) -> Option<ti
         .filter(|duration| !duration.is_zero())
 }
 
-#[allow(clippy::too_many_lines)]
+#[derive(Default)]
+struct LoopLabels {
+    last_version_label: Option<String>,
+    last_host_label: Option<String>,
+}
+
+#[inline]
+fn metric_database(driver: &str) -> Option<&'static str> {
+    match driver {
+        "postgres" | "postgresql" => Some("postgres"),
+        "mysql" => Some("mysql"),
+        _ => None,
+    }
+}
+
+async fn run_health_check(
+    database: &str,
+    dsn: &DSN,
+    now: DateTime<Utc>,
+    range: u32,
+    tls: &TlsConfig,
+    cert_cache: &CertCache,
+) -> anyhow::Result<HealthCheckResult> {
+    match database {
+        "postgres" => postgres::test_rw(dsn, now, range, tls, cert_cache).await,
+        "mysql" => mysql::test_rw(dsn, now, range, tls, cert_cache).await,
+        _ => unreachable!("unsupported database label"),
+    }
+}
+
+fn apply_tls_metrics(database: &str, pulse: &mut Pulse, result: &HealthCheckResult) {
+    if let Some(metadata) = result.tls_metadata.as_ref() {
+        metadata.version.clone_into(&mut pulse.tls_version);
+        metadata.cipher.clone_into(&mut pulse.tls_cipher);
+
+        if let (Some(version), Some(cipher)) = (&metadata.version, &metadata.cipher) {
+            TLS_INFO
+                .with_label_values(&[database, version.as_str(), cipher.as_str()])
+                .set(1);
+        }
+
+        if let Some(days) = metadata.cert_expiry_days {
+            TLS_CERT_EXPIRY_DAYS
+                .with_label_values(&[database])
+                .set(days);
+        }
+    }
+}
+
+fn record_success(
+    database: &str,
+    now: DateTime<Utc>,
+    pulse: &mut Pulse,
+    result: &HealthCheckResult,
+    labels: &mut LoopLabels,
+) {
+    result.version.clone_into(&mut pulse.version);
+    pulse.uptime_seconds = result.uptime_seconds;
+
+    update_database_version_metric(
+        database,
+        result.version.as_str(),
+        &mut labels.last_version_label,
+    );
+    update_database_host_metric(
+        database,
+        result.db_host.as_deref(),
+        &mut labels.last_host_label,
+    );
+    if let Some(uptime) = result.uptime_seconds {
+        DATABASE_UPTIME_SECONDS
+            .with_label_values(&[database])
+            .set(uptime);
+    }
+
+    if is_database_read_only(database, &result.version) {
+        DB_READONLY.with_label_values(&[database]).set(1);
+        PULSE.set(0);
+        ITERATIONS_TOTAL
+            .with_label_values(&[database, "error"])
+            .inc();
+        DB_ERRORS.with_label_values(&[database, "query"]).inc();
+    } else {
+        DB_READONLY.with_label_values(&[database]).set(0);
+        PULSE.set(1);
+        ITERATIONS_TOTAL
+            .with_label_values(&[database, "success"])
+            .inc();
+        LAST_SUCCESS
+            .with_label_values(&[database])
+            .set(now.timestamp());
+    }
+
+    apply_tls_metrics(database, pulse, result);
+}
+
+fn classify_error_type(database: &str, error: &anyhow::Error) -> &'static str {
+    let error_str = format!("{error:#}");
+    if error_str.contains("authentication")
+        || error_str.contains("password")
+        || (database == "mysql" && error_str.contains("Access denied"))
+    {
+        "authentication"
+    } else if error_str.contains("timeout") {
+        "timeout"
+    } else if error_str.contains("connection") || error_str.contains("refused") {
+        "connection"
+    } else if error_str.contains("transaction") {
+        "transaction"
+    } else {
+        "query"
+    }
+}
+
+fn record_error(database: &str, error: &anyhow::Error, tls: &TlsConfig, labels: &mut LoopLabels) {
+    PULSE.set(0);
+    eprintln!("{error}");
+    update_database_host_metric(database, None, &mut labels.last_host_label);
+    ITERATIONS_TOTAL
+        .with_label_values(&[database, "error"])
+        .inc();
+    DB_ERRORS
+        .with_label_values(&[database, classify_error_type(database, error)])
+        .inc();
+
+    if tls.mode.is_enabled() && is_tls_error(error) {
+        TLS_CONNECTION_ERRORS
+            .with_label_values(&[database, "handshake"])
+            .inc();
+    }
+}
+
+async fn run_iteration(
+    dsn: &DSN,
+    every: u16,
+    range: u32,
+    tls: &TlsConfig,
+    cert_cache: &CertCache,
+    tx: &mpsc::UnboundedSender<()>,
+    labels: &mut LoopLabels,
+) {
+    let mut pulse = Pulse::default();
+    let now = Utc::now();
+    let wait_time = Duration::seconds(every.into());
+    pulse.time = now.to_rfc3339();
+    let timer = RUNTIME.start_timer();
+
+    let Some(database) = metric_database(dsn.driver.as_str()) else {
+        eprintln!("unsupported driver");
+        let _ = tx.send(());
+        return;
+    };
+
+    match run_health_check(database, dsn, now, range, tls, cert_cache).await {
+        Ok(result) => record_success(database, now, &mut pulse, &result, labels),
+        Err(error) => record_error(database, &error, tls, labels),
+    }
+
+    timer.observe_duration();
+    let runtime = Utc::now().signed_duration_since(now);
+    pulse.runtime_ms = runtime.num_milliseconds();
+    LAST_RUNTIME_MS
+        .with_label_values(&[database])
+        .set(pulse.runtime_ms);
+
+    if let Ok(serialized) = serde_json::to_string(&pulse) {
+        println!("{serialized}");
+    }
+    if let Some(remaining) = remaining_sleep_duration(wait_time, runtime) {
+        time::sleep(remaining).await;
+    }
+}
+
 async fn run_loop(
     dsn: DSN,
     every: u16,
@@ -208,286 +380,25 @@ async fn run_loop(
     cert_cache: Arc<CertCache>,
     tx: mpsc::UnboundedSender<()>,
 ) {
-    let mut last_version_label: Option<String> = None;
-    let mut last_host_label: Option<String> = None;
+    let mut labels = LoopLabels::default();
 
     loop {
-        // Catch panics in individual iterations to keep loop alive
-        let iteration_result = std::panic::AssertUnwindSafe(async {
-            let mut pulse = Pulse::default();
-            let now = Utc::now();
-            let wait_time = Duration::seconds(every.into());
-
-            // add start time
-            pulse.time = now.to_rfc3339();
-
-            let timer = RUNTIME.start_timer();
-
-            let db_driver = dsn.driver.as_str();
-            match db_driver {
-                "postgres" | "postgresql" => {
-                    match postgres::test_rw(&dsn, now, range, &tls, &cert_cache).await {
-                        Ok(result) => {
-                            result.version.clone_into(&mut pulse.version);
-                            pulse.uptime_seconds = result.uptime_seconds;
-
-                            // Record database version and uptime
-                            update_database_version_metric(
-                                "postgres",
-                                result.version.as_str(),
-                                &mut last_version_label,
-                            );
-                            update_database_host_metric(
-                                "postgres",
-                                result.db_host.as_deref(),
-                                &mut last_host_label,
-                            );
-                            if let Some(uptime) = result.uptime_seconds {
-                                DATABASE_UPTIME_SECONDS
-                                    .with_label_values(&["postgres"])
-                                    .set(uptime);
-                            }
-
-                            // Check for read-only mode
-                            let is_read_only = is_database_read_only("postgres", &result.version);
-                            if is_read_only {
-                                DB_READONLY.with_label_values(&["postgres"]).set(1);
-                                // Pulse must represent full read/write health.
-                                PULSE.set(0);
-                                ITERATIONS_TOTAL
-                                    .with_label_values(&["postgres", "error"])
-                                    .inc();
-                                DB_ERRORS.with_label_values(&["postgres", "query"]).inc();
-                            } else {
-                                DB_READONLY.with_label_values(&["postgres"]).set(0);
-                                PULSE.set(1);
-
-                                // Record successful iteration
-                                ITERATIONS_TOTAL
-                                    .with_label_values(&["postgres", "success"])
-                                    .inc();
-
-                                // Record last success timestamp
-                                LAST_SUCCESS
-                                    .with_label_values(&["postgres"])
-                                    .set(now.timestamp());
-                            }
-
-                            // Record TLS metrics if available
-                            if let Some(ref metadata) = result.tls_metadata {
-                                metadata.version.clone_into(&mut pulse.tls_version);
-                                metadata.cipher.clone_into(&mut pulse.tls_cipher);
-
-                                // Update TLS info gauge
-                                if let (Some(version), Some(cipher)) =
-                                    (&metadata.version, &metadata.cipher)
-                                {
-                                    TLS_INFO
-                                        .with_label_values(&[
-                                            "postgres",
-                                            version.as_str(),
-                                            cipher.as_str(),
-                                        ])
-                                        .set(1);
-                                }
-
-                                // Record certificate expiry if available
-                                if let Some(days) = metadata.cert_expiry_days {
-                                    TLS_CERT_EXPIRY_DAYS
-                                        .with_label_values(&["postgres"])
-                                        .set(days);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            PULSE.set(0);
-                            eprintln!("{e}");
-                            update_database_host_metric("postgres", None, &mut last_host_label);
-
-                            // Record failed iteration
-                            ITERATIONS_TOTAL
-                                .with_label_values(&["postgres", "error"])
-                                .inc();
-
-                            // Classify error type
-                            let error_str = format!("{e:#}");
-                            let error_type = if error_str.contains("authentication")
-                                || error_str.contains("password")
-                            {
-                                "authentication"
-                            } else if error_str.contains("timeout") {
-                                "timeout"
-                            } else if error_str.contains("connection")
-                                || error_str.contains("refused")
-                            {
-                                "connection"
-                            } else if error_str.contains("transaction") {
-                                "transaction"
-                            } else {
-                                "query"
-                            };
-
-                            DB_ERRORS.with_label_values(&["postgres", error_type]).inc();
-
-                            // Record TLS error if it's SSL-related
-                            if tls.mode.is_enabled() && is_tls_error(&e) {
-                                TLS_CONNECTION_ERRORS
-                                    .with_label_values(&["postgres", "handshake"])
-                                    .inc();
-                            }
-                        }
-                    }
-                }
-                "mysql" => match mysql::test_rw(&dsn, now, range, &tls, &cert_cache).await {
-                    Ok(result) => {
-                        result.version.clone_into(&mut pulse.version);
-                        pulse.uptime_seconds = result.uptime_seconds;
-
-                        // Record database version and uptime
-                        update_database_version_metric(
-                            "mysql",
-                            result.version.as_str(),
-                            &mut last_version_label,
-                        );
-                        update_database_host_metric(
-                            "mysql",
-                            result.db_host.as_deref(),
-                            &mut last_host_label,
-                        );
-                        if let Some(uptime) = result.uptime_seconds {
-                            DATABASE_UPTIME_SECONDS
-                                .with_label_values(&["mysql"])
-                                .set(uptime);
-                        }
-
-                        // Check for read-only mode
-                        let is_read_only = is_database_read_only("mysql", &result.version);
-                        if is_read_only {
-                            DB_READONLY.with_label_values(&["mysql"]).set(1);
-                            // Pulse must represent full read/write health.
-                            PULSE.set(0);
-                            ITERATIONS_TOTAL
-                                .with_label_values(&["mysql", "error"])
-                                .inc();
-                            DB_ERRORS.with_label_values(&["mysql", "query"]).inc();
-                        } else {
-                            DB_READONLY.with_label_values(&["mysql"]).set(0);
-                            PULSE.set(1);
-
-                            // Record successful iteration
-                            ITERATIONS_TOTAL
-                                .with_label_values(&["mysql", "success"])
-                                .inc();
-
-                            // Record last success timestamp
-                            LAST_SUCCESS
-                                .with_label_values(&["mysql"])
-                                .set(now.timestamp());
-                        }
-
-                        // Record TLS metrics if available
-                        if let Some(ref metadata) = result.tls_metadata {
-                            metadata.version.clone_into(&mut pulse.tls_version);
-                            metadata.cipher.clone_into(&mut pulse.tls_cipher);
-
-                            // Update TLS info gauge
-                            if let (Some(version), Some(cipher)) =
-                                (&metadata.version, &metadata.cipher)
-                            {
-                                TLS_INFO
-                                    .with_label_values(&[
-                                        "mysql",
-                                        version.as_str(),
-                                        cipher.as_str(),
-                                    ])
-                                    .set(1);
-                            }
-
-                            // Record certificate expiry if available
-                            if let Some(days) = metadata.cert_expiry_days {
-                                TLS_CERT_EXPIRY_DAYS.with_label_values(&["mysql"]).set(days);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        PULSE.set(0);
-                        eprintln!("{e}");
-                        update_database_host_metric("mysql", None, &mut last_host_label);
-
-                        // Record failed iteration
-                        ITERATIONS_TOTAL
-                            .with_label_values(&["mysql", "error"])
-                            .inc();
-
-                        // Classify error type
-                        let error_str = format!("{e:#}");
-                        let error_type = if error_str.contains("authentication")
-                            || error_str.contains("password")
-                            || error_str.contains("Access denied")
-                        {
-                            "authentication"
-                        } else if error_str.contains("timeout") {
-                            "timeout"
-                        } else if error_str.contains("connection") || error_str.contains("refused")
-                        {
-                            "connection"
-                        } else if error_str.contains("transaction") {
-                            "transaction"
-                        } else {
-                            "query"
-                        };
-
-                        DB_ERRORS.with_label_values(&["mysql", error_type]).inc();
-
-                        // Record TLS error if it's SSL-related
-                        if tls.mode.is_enabled() && is_tls_error(&e) {
-                            TLS_CONNECTION_ERRORS
-                                .with_label_values(&["mysql", "handshake"])
-                                .inc();
-                        }
-                    }
-                },
-                _ => {
-                    eprintln!("unsupported driver");
-                    let _ = tx.send(());
-                    return;
-                }
-            }
-
-            timer.observe_duration();
-
-            let end = Utc::now();
-            let runtime = end.signed_duration_since(now);
-            pulse.runtime_ms = runtime.num_milliseconds();
-
-            // Record runtime metric
-            let metric_db = match db_driver {
-                "postgres" | "postgresql" => "postgres",
-                "mysql" => "mysql",
-                other => other,
-            };
-            LAST_RUNTIME_MS
-                .with_label_values(&[metric_db])
-                .set(pulse.runtime_ms);
-
-            if let Ok(serialized) = serde_json::to_string(&pulse) {
-                println!("{serialized}");
-            }
-
-            // Sleep for remaining interval time to maintain fixed interval
-            if let Some(remaining) = remaining_sleep_duration(wait_time, runtime) {
-                time::sleep(remaining).await;
-            }
-        })
+        let iteration_result = std::panic::AssertUnwindSafe(run_iteration(
+            &dsn,
+            every,
+            range,
+            &tls,
+            cert_cache.as_ref(),
+            &tx,
+            &mut labels,
+        ))
         .catch_unwind()
         .await;
 
-        // Handle panics in iteration gracefully
         if let Err(panic_info) = iteration_result {
             eprintln!("Panic in monitoring loop iteration: {panic_info:?}");
-            PULSE.set(0); // Mark as unhealthy
-            PANICS_RECOVERED.inc(); // Track panic recovery
-            // Sleep for the interval before retrying
+            PULSE.set(0);
+            PANICS_RECOVERED.inc();
             time::sleep(time::Duration::from_secs(every.into())).await;
         }
     }
@@ -495,6 +406,8 @@ async fn run_loop(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
     use super::*;
     use anyhow::anyhow;
 

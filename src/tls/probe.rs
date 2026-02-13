@@ -45,9 +45,10 @@ static CRYPTO_PROVIDER_INIT: OnceLock<()> = OnceLock::new();
 /// Panics if the crypto provider cannot be installed (should never happen in practice)
 pub fn ensure_crypto_provider() {
     CRYPTO_PROVIDER_INIT.get_or_init(|| {
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .expect("failed to install ring crypto provider");
+        if let Err(err) = rustls::crypto::ring::default_provider().install_default() {
+            eprintln!("failed to install ring crypto provider: {err:?}");
+            std::process::exit(1);
+        }
     });
 }
 
@@ -184,7 +185,9 @@ fn parse_mysql_handshake(payload: &[u8]) -> Result<(u32, u8)> {
     let mut cursor = 0;
     cursor += 1; // protocol version
 
-    let rest = &payload[cursor..];
+    let rest = payload
+        .get(cursor..)
+        .context("invalid MySQL handshake: missing protocol version")?;
     let version_end = rest
         .iter()
         .position(|&b| b == 0)
@@ -198,14 +201,19 @@ fn parse_mysql_handshake(payload: &[u8]) -> Result<(u32, u8)> {
     cursor += 8; // auth plugin data part 1
     cursor += 1; // filler
 
+    let lower_capabilities = payload
+        .get(cursor..cursor + 2)
+        .context("invalid MySQL handshake: missing lower capabilities")?;
     let mut capabilities = u32::from(u16::from_le_bytes(
-        payload[cursor..cursor + 2].try_into().unwrap(),
+        lower_capabilities
+            .try_into()
+            .context("invalid MySQL handshake capability encoding")?,
     ));
     cursor += 2;
 
     let mut charset = 0u8;
-    if payload.len() > cursor {
-        charset = payload[cursor];
+    if let Some(&value) = payload.get(cursor) {
+        charset = value;
         cursor += 1;
     }
 
@@ -213,8 +221,13 @@ fn parse_mysql_handshake(payload: &[u8]) -> Result<(u32, u8)> {
         cursor += 2; // status flags
     }
     if payload.len() >= cursor + 2 {
+        let upper_capabilities = payload
+            .get(cursor..cursor + 2)
+            .context("invalid MySQL handshake: missing upper capabilities")?;
         let upper = u32::from(u16::from_le_bytes(
-            payload[cursor..cursor + 2].try_into().unwrap(),
+            upper_capabilities
+                .try_into()
+                .context("invalid MySQL handshake upper capability encoding")?,
         ));
         capabilities |= upper << 16;
     }
@@ -385,6 +398,8 @@ impl ServerCertVerifier for NoVerifier {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
     use super::*;
 
     #[test]

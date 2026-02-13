@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use chrono::Utc;
 use dbpulse::queries::{HealthCheckResult, mysql, postgres};
