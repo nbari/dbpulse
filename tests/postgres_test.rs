@@ -7,6 +7,7 @@ use common::*;
 use dbpulse::queries::postgres;
 use dbpulse::tls::cache::CertCache;
 use dbpulse::tls::{TlsConfig, TlsMode};
+use std::fs::File;
 use std::process::{Child, Command, Stdio};
 use tokio::time::Duration;
 
@@ -361,8 +362,17 @@ async fn test_postgres_pulse_transition_stop_start() {
         return;
     }
 
+    assert!(
+        wait_for_postgres_ready(POSTGRES_DSN, Duration::from_secs(30)).await,
+        "PostgreSQL is not reachable with application DSN before failover test"
+    );
+
     let port = pick_free_port();
     let binary = dbpulse_binary_path();
+    let stdout_log = format!("/tmp/dbpulse-postgres-failover-{port}.stdout.log");
+    let stderr_log = format!("/tmp/dbpulse-postgres-failover-{port}.stderr.log");
+    let stdout_file = File::create(&stdout_log).expect("failed to create stdout log file");
+    let stderr_file = File::create(&stderr_log).expect("failed to create stderr log file");
 
     let child = Command::new(binary)
         .args([
@@ -375,15 +385,28 @@ async fn test_postgres_pulse_transition_stop_start() {
             "--port",
             &port.to_string(),
         ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file))
         .spawn()
         .expect("failed to spawn dbpulse");
-    let _guard = ChildGuard(child);
+    let mut guard = ChildGuard(child);
 
     assert!(
-        wait_for_pulse_value(port, 1, Duration::from_secs(40)).await,
-        "Expected initial pulse=1 before failover simulation"
+        wait_for_metrics_endpoint(port, Duration::from_secs(10)).await,
+        "dbpulse metrics endpoint not reachable on port {port}. process status: {:?}\nstdout:\n{}\nstderr:\n{}",
+        guard.0.try_wait().ok().flatten(),
+        std::fs::read_to_string(&stdout_log).unwrap_or_default(),
+        std::fs::read_to_string(&stderr_log).unwrap_or_default()
+    );
+
+    let initial_pulse = wait_for_pulse_value_detailed(port, 1, Duration::from_secs(40)).await;
+    assert!(
+        initial_pulse.is_ok(),
+        "Expected initial pulse=1 before failover simulation: {}. process status: {:?}\nstdout:\n{}\nstderr:\n{}",
+        initial_pulse.err().unwrap_or_default(),
+        guard.0.try_wait().ok().flatten(),
+        std::fs::read_to_string(&stdout_log).unwrap_or_default(),
+        std::fs::read_to_string(&stderr_log).unwrap_or_default()
     );
 
     assert!(

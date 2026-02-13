@@ -385,14 +385,16 @@ async fn mysql_transaction_rollback_test(
     let rollback_seed = now.timestamp_micros().rem_euclid(i64::from(i32::MAX));
     let rollback_test_id =
         i32::try_from(rollback_seed).context("rollback test id out of range for MySQL INT")?;
+    let rollback_uuid = Uuid::new_v4().to_string();
 
     let transaction_timer = Instant::now();
     let mut tx = conn.begin().await?;
     let insert_tx_sql = format!(
-        "INSERT INTO {table_name} (id, t1, uuid) VALUES (?, 999, UUID()) ON DUPLICATE KEY UPDATE t1 = 999"
+        "INSERT INTO {table_name} (id, t1, uuid) VALUES (?, 999, ?) ON DUPLICATE KEY UPDATE t1 = 999"
     );
     sqlx::query(&insert_tx_sql)
         .bind(rollback_test_id)
+        .bind(rollback_uuid)
         .execute(tx.as_mut())
         .await?;
 
