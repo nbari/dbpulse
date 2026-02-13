@@ -82,7 +82,6 @@ pub async fn test_rw_with_table(
     }
 
     monitor_postgres_blocking_queries(&mut conn).await;
-    ensure_postgres_uuid_extension(&mut conn).await?;
     ensure_postgres_table(&mut conn, table_name).await?;
     let id = postgres_insert_and_verify(&mut conn, now, range, table_name).await?;
     postgres_transaction_rollback_test(&mut conn, now, table_name).await?;
@@ -307,26 +306,6 @@ fn is_ignorable_postgres_create_error(error: &sqlx::Error) -> bool {
     }
 }
 
-async fn ensure_postgres_uuid_extension(conn: &mut sqlx::PgConnection) -> Result<()> {
-    if let Err(error) = sqlx::query("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
-        .execute(&mut *conn)
-        .await
-    {
-        if let sqlx::Error::Database(db_err) = &error {
-            let code = db_err
-                .as_error()
-                .downcast_ref::<PgDatabaseError>()
-                .map(PgDatabaseError::code);
-            if code != Some("42710") && !db_err.message().contains("duplicate key") {
-                return Err(error.into());
-            }
-        } else {
-            return Err(error.into());
-        }
-    }
-    Ok(())
-}
-
 async fn ensure_postgres_table(conn: &mut sqlx::PgConnection, table_name: &str) -> Result<()> {
     let create_table_sql = format!(
         r"
@@ -422,14 +401,16 @@ async fn postgres_transaction_rollback_test(
     let rollback_seed = now.timestamp_micros().rem_euclid(i64::from(i32::MAX));
     let rollback_test_id =
         i32::try_from(rollback_seed).context("rollback test id out of range for PostgreSQL INT")?;
+    let rollback_uuid = Uuid::new_v4();
 
     let transaction_timer = Instant::now();
     let mut tx = conn.begin().await?;
     let insert_tx_sql = format!(
-        "INSERT INTO {table_name} (id, t1, uuid) VALUES ($1, 999, UUID_GENERATE_V4()) ON CONFLICT (id) DO UPDATE SET t1 = 999"
+        "INSERT INTO {table_name} (id, t1, uuid) VALUES ($1, 999, $2) ON CONFLICT (id) DO UPDATE SET t1 = 999"
     );
     sqlx::query(&insert_tx_sql)
         .bind(rollback_test_id)
+        .bind(rollback_uuid)
         .execute(tx.as_mut())
         .await?;
 

@@ -180,7 +180,7 @@ PostgreSQL requires the private key to be owned by the `postgres` user and have 
    ```bash
    # Build custom image with proper permissions
    cat > Dockerfile.postgres-tls <<EOF
-   FROM postgres:17-alpine
+   FROM postgres:18-alpine
    COPY .certs/postgres/server.crt /var/lib/postgresql/server.crt
    COPY .certs/postgres/server.key /var/lib/postgresql/server.key
    COPY .certs/postgres/ca.crt /var/lib/postgresql/ca.crt
