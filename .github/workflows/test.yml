@@ -73,7 +73,7 @@ jobs:
     
     services:
       postgres:
-        image: postgres:latest
+        image: postgres:18
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: secret
@@ -167,7 +167,7 @@ jobs:
             -e POSTGRES_USER=postgres \
             -e POSTGRES_PASSWORD=secret \
             -e POSTGRES_DB=testdb \
-            -p 5432:5432 postgres:latest
+            -p 5432:5432 postgres:18
 
           docker run -d --name dbpulse-mariadb \
             -e MARIADB_USER=dbpulse \
@@ -258,7 +258,7 @@ jobs:
         run: |
           # Create custom PostgreSQL image with certificates
           cat > Dockerfile.postgres-tls <<EOF
-          FROM postgres:17-alpine
+          FROM postgres:18-alpine
           COPY .certs/postgres/server.crt /var/lib/postgresql/server.crt
           COPY .certs/postgres/server.key /var/lib/postgresql/server.key
           COPY .certs/postgres/ca.crt /var/lib/postgresql/ca.crt
