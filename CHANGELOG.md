@@ -1,3 +1,16 @@
+## 0.9.1 (2026-04-18)
+
+### Changed
+* **Dependencies** - Updated core dependencies to their latest versions:
+  - `clap` updated to `4.6`
+  - `rand` updated to `0.10` (migrated to `RngExt` for `random_range`)
+* **GitHub Actions** - Updated CI/CD workflows to latest 2026 versions:
+  - Migrated actions to `@v6`, `@v7`, and `@v1` tags supporting Node 24 runtime
+  - Updated MariaDB service images to `mariadb:12`
+* **Code Quality** - Comprehensive linting and formatting pass:
+  - Fixed all `clippy` warnings (collapsed matches, suboptimal duration units)
+  - Applied standard project formatting with `cargo fmt`
+
 ## 0.9.0 (2026-02-13)
 
 ### Breaking Changes

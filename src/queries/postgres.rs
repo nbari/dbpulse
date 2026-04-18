@@ -14,7 +14,7 @@ use crate::{
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc, prelude::*};
 use dsn::DSN;
-use rand::Rng;
+use rand::RngExt;
 use sqlx::{
     ConnectOptions, Connection, Row,
     postgres::{PgConnectOptions, PgDatabaseError, PgSslMode},

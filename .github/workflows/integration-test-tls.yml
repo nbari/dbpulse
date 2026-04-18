@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@v1
       
       - name: Install database clients and OpenSSL
         run: |
@@ -96,7 +96,7 @@ jobs:
             -v $PWD/.certs/mariadb/server.crt:/etc/mysql/ssl/server.crt:ro \
             -v $PWD/.certs/mariadb/server.key:/etc/mysql/ssl/server.key:ro \
             -v $PWD/.certs/mariadb/ca.crt:/etc/mysql/ssl/ca.crt:ro \
-            mariadb:11 \
+            mariadb:12 \
             --ssl-cert=/etc/mysql/ssl/server.crt \
             --ssl-key=/etc/mysql/ssl/server.key \
             --ssl-ca=/etc/mysql/ssl/ca.crt \

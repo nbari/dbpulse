@@ -31,7 +31,7 @@ async fn test_postgres_basic_connection() {
     let now = Utc::now();
     let tls = TlsConfig::default();
     let table_name = test_table_name("test_postgres_basic_connection");
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     let result = postgres::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
     assert!(
@@ -57,7 +57,7 @@ async fn test_postgres_read_write_operations() {
     let dsn = parse_dsn(POSTGRES_DSN);
     let now = Utc::now();
     let tls = TlsConfig::default();
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     // Run test multiple times to ensure cleanup works
     for i in 0..5 {
@@ -80,7 +80,7 @@ async fn test_postgres_transaction_rollback() {
     let now = Utc::now();
     let tls = TlsConfig::default();
     let table_name = test_table_name("test_postgres_transaction_rollback");
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     // This tests that transaction rollback works correctly
     let result = postgres::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
@@ -104,7 +104,7 @@ async fn test_postgres_concurrent_connections() {
             let dsn = parse_dsn(POSTGRES_DSN);
             let tls = TlsConfig::default();
             let now = Utc::now();
-            let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+            let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
             postgres::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await
         });
         handles.push(handle);
@@ -130,7 +130,7 @@ async fn test_postgres_with_different_ranges() {
     let dsn = parse_dsn(POSTGRES_DSN);
     let now = Utc::now();
     let tls = TlsConfig::default();
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     // Test different range values
     for range in [10, 50, 100, 500, 1000] {
@@ -423,7 +423,7 @@ async fn test_postgres_pulse_transition_stop_start() {
         "Failed to start PostgreSQL container (dbpulse-postgres)"
     );
     assert!(
-        wait_for_pulse_value(port, 1, Duration::from_secs(60)).await,
+        wait_for_pulse_value(port, 1, Duration::from_mins(1)).await,
         "Expected pulse transition back to 1 after container start"
     );
 }

@@ -60,7 +60,7 @@ async fn test_postgres_all_metrics_present() {
     let dsn = parse_dsn(POSTGRES_DSN);
     let now = Utc::now();
     let tls = TlsConfig::default();
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
     let table_name = test_table_name("metrics_test_postgres");
 
     // Run the health check
@@ -176,7 +176,7 @@ async fn test_mariadb_all_metrics_present() {
     let dsn = parse_dsn(MARIADB_DSN);
     let now = Utc::now();
     let tls = TlsConfig::default();
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
     let table_name = test_table_name("metrics_test_mariadb");
 
     // Run the health check
@@ -316,7 +316,7 @@ async fn test_postgres_and_mariadb_metric_parity() {
     let pg_dsn = parse_dsn(POSTGRES_DSN);
     let pg_now = Utc::now();
     let pg_tls = TlsConfig::default();
-    let pg_cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let pg_cert_cache = CertCache::new(std::time::Duration::from_mins(5));
     let pg_table = test_table_name("parity_test_postgres");
 
     let pg_result =
@@ -334,7 +334,7 @@ async fn test_postgres_and_mariadb_metric_parity() {
     let my_dsn = parse_dsn(MARIADB_DSN);
     let my_now = Utc::now();
     let my_tls = TlsConfig::default();
-    let my_cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let my_cert_cache = CertCache::new(std::time::Duration::from_mins(5));
     let my_table = test_table_name("parity_test_mariadb");
 
     let my_result =

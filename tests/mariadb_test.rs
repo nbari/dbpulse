@@ -49,7 +49,7 @@ async fn test_mariadb_read_write_operations() {
     let dsn = parse_dsn(MARIADB_DSN);
     let now = Utc::now();
     let tls = TlsConfig::default();
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     // Run test multiple times to ensure cleanup works
     for i in 0..5 {
@@ -72,7 +72,7 @@ async fn test_mariadb_transaction_rollback() {
     let now = Utc::now();
     let tls = TlsConfig::default();
     let table_name = test_table_name("test_mariadb_transaction_rollback");
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     // This tests that transaction rollback works correctly
     let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
@@ -96,7 +96,7 @@ async fn test_mariadb_concurrent_connections() {
             let dsn = parse_dsn(MARIADB_DSN);
             let tls = TlsConfig::default();
             let now = Utc::now();
-            let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+            let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
             mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await
         });
         handles.push(handle);
@@ -122,7 +122,7 @@ async fn test_mariadb_with_different_ranges() {
     let dsn = parse_dsn(MARIADB_DSN);
     let now = Utc::now();
     let tls = TlsConfig::default();
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     // Test different range values
     for range in [10, 50, 100, 500, 1000] {
@@ -414,7 +414,7 @@ async fn test_mariadb_pulse_transition_stop_start() {
         "Failed to start MariaDB container (dbpulse-mariadb)"
     );
     assert!(
-        wait_for_pulse_value(port, 1, Duration::from_secs(60)).await,
+        wait_for_pulse_value(port, 1, Duration::from_mins(1)).await,
         "Expected pulse transition back to 1 after container start"
     );
 }

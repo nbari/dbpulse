@@ -58,7 +58,7 @@ async fn test_tls_disable() {
         cert: None,
         key: None,
     };
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     let table_name = test_table_name("test_mariadb_tls_disable");
     let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
@@ -89,7 +89,7 @@ async fn test_tls_require() {
         cert: None,
         key: None,
     };
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     let table_name = test_table_name("test_mariadb_tls_require");
     let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
@@ -136,7 +136,7 @@ async fn test_tls_verify_ca() {
         cert: None,
         key: None,
     };
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     let table_name = test_table_name("test_mariadb_tls_verify_ca");
     let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
@@ -186,7 +186,7 @@ async fn test_tls_verify_identity() {
         cert: None,
         key: None,
     };
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     let table_name = test_table_name("test_mariadb_tls_verify_identity");
     let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
@@ -230,7 +230,7 @@ async fn test_tls_multiple_connections() {
         cert: None,
         key: None,
     };
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     // Run multiple connections in sequence to verify TLS session reuse
     for i in 0..5 {
@@ -264,7 +264,7 @@ async fn test_tls_with_wrong_ca_fails() {
         cert: None,
         key: None,
     };
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     let table_name = test_table_name("test_mariadb_tls_wrong_ca");
     let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
@@ -292,7 +292,7 @@ async fn test_tls_connection_info() {
         cert: None,
         key: None,
     };
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     let table_name = test_table_name("test_mariadb_tls_connection_info");
     let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;
@@ -338,7 +338,7 @@ async fn test_tls_cipher_suite() {
         cert: None,
         key: None,
     };
-    let cert_cache = CertCache::new(std::time::Duration::from_secs(300));
+    let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
     let table_name = test_table_name("test_mariadb_tls_cipher");
     let result = mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await;

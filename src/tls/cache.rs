@@ -93,13 +93,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_creation() {
-        let cache = CertCache::new(Duration::from_secs(300));
+        let cache = CertCache::new(Duration::from_mins(5));
         assert!(cache.get("test").await.is_none());
     }
 
     #[tokio::test]
     async fn test_cache_set_get() {
-        let cache = CertCache::new(Duration::from_secs(300));
+        let cache = CertCache::new(Duration::from_mins(5));
         let metadata = TlsMetadata {
             cert_subject: Some("CN=test".to_string()),
             cert_issuer: Some("CN=CA".to_string()),
@@ -130,7 +130,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_multiple_entries() {
-        let cache = CertCache::new(Duration::from_secs(300));
+        let cache = CertCache::new(Duration::from_mins(5));
 
         let metadata1 = TlsMetadata {
             cert_subject: Some("CN=server1".to_string()),
@@ -188,7 +188,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_overwrite() {
-        let cache = CertCache::new(Duration::from_secs(300));
+        let cache = CertCache::new(Duration::from_mins(5));
 
         let metadata1 = TlsMetadata {
             cert_subject: Some("CN=old".to_string()),
@@ -214,7 +214,7 @@ mod tests {
     async fn test_cache_concurrent_access() {
         use std::sync::Arc;
 
-        let cache = Arc::new(CertCache::new(Duration::from_secs(300)));
+        let cache = Arc::new(CertCache::new(Duration::from_mins(5)));
         let metadata = TlsMetadata {
             cert_subject: Some("CN=concurrent".to_string()),
             ..Default::default()
@@ -258,7 +258,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_full_metadata() {
-        let cache = CertCache::new(Duration::from_secs(300));
+        let cache = CertCache::new(Duration::from_mins(5));
         let metadata = TlsMetadata {
             version: Some("TLSv1.3".to_string()),
             cipher: Some("TLS_AES_256_GCM_SHA384".to_string()),

@@ -25,7 +25,7 @@ pub fn skip_if_no_mariadb() -> bool {
 /// Create a test certificate cache with a long TTL (5 minutes)
 /// This allows tests to reuse certificate data and reduces test time
 pub fn test_cert_cache() -> CertCache {
-    CertCache::new(std::time::Duration::from_secs(300))
+    CertCache::new(std::time::Duration::from_mins(5))
 }
 
 pub async fn test_postgres_connection(dsn_str: &str) -> anyhow::Result<HealthCheckResult> {

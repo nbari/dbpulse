@@ -14,7 +14,7 @@ use crate::{
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc, prelude::*};
 use dsn::DSN;
-use rand::Rng;
+use rand::RngExt;
 use sqlx::{
     ConnectOptions, Connection, Executor, Row,
     mysql::{MySqlConnectOptions, MySqlConnection, MySqlDatabaseError, MySqlSslMode},
@@ -602,15 +602,11 @@ async fn extract_tls_metadata(
         let value: String = row.try_get(1)?;
 
         match variable_name.as_str() {
-            "Ssl_version" => {
-                if !value.is_empty() {
-                    tls_version = Some(value);
-                }
+            "Ssl_version" if !value.is_empty() => {
+                tls_version = Some(value);
             }
-            "Ssl_cipher" => {
-                if !value.is_empty() {
-                    tls_cipher = Some(value);
-                }
+            "Ssl_cipher" if !value.is_empty() => {
+                tls_cipher = Some(value);
             }
             "Ssl_server_not_after" => {
                 if cert_expiry_days.is_none()
