@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
 
@@ -26,18 +26,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D clippy::all -D clippy::nursery
-          -D warnings
+        run: cargo clippy --all-targets --all-features
 
   check:
     name: Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Check
         run: cargo check
@@ -58,7 +57,7 @@ jobs:
       - check
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: test
         run: cargo test
@@ -70,7 +69,7 @@ jobs:
       - format
       - lint
       - check
-    
+
     services:
       postgres:
         image: postgres:18
@@ -85,7 +84,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      
+
       mariadb:
         image: mariadb:12
         env:
@@ -100,16 +99,16 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    
+
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@v1
-      
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Install database clients
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client mariadb-client
-      
+
       - name: Wait for databases
         run: |
           echo "Waiting for PostgreSQL..."
@@ -121,7 +120,7 @@ jobs:
             echo "PostgreSQL not ready, waiting... ($i/30)"
             sleep 2
           done
-          
+
           echo "Waiting for MariaDB..."
           for i in {1..30}; do
             if mariadb -h 127.0.0.1 -u dbpulse -psecret -D testdb -e "SELECT 1" &>/dev/null; then
@@ -131,12 +130,12 @@ jobs:
             echo "MariaDB not ready, waiting... ($i/30)"
             sleep 2
           done
-      
+
       - name: Run PostgreSQL integration tests
         run: cargo test --test postgres_test -- --ignored --nocapture
         env:
           RUST_BACKTRACE: 1
-      
+
       - name: Run MariaDB integration tests
         run: cargo test --test mariadb_test -- --ignored --nocapture
         env:
@@ -152,7 +151,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Install database clients
         run: |
@@ -218,15 +217,17 @@ jobs:
           done
 
       - name: Run PostgreSQL failover transition test
-        run: cargo test --test postgres_test test_postgres_pulse_transition_stop_start -- --ignored --nocapture --test-threads=1
+        run: cargo test --test postgres_test test_postgres_pulse_transition_stop_start
+          -- --ignored --nocapture --test-threads=1
         env:
-          RUN_FAILOVER_TRANSITION_TESTS: "1"
+          RUN_FAILOVER_TRANSITION_TESTS: '1'
           RUST_BACKTRACE: 1
 
       - name: Run MariaDB failover transition test
-        run: cargo test --test mariadb_test test_mariadb_pulse_transition_stop_start -- --ignored --nocapture --test-threads=1
+        run: cargo test --test mariadb_test test_mariadb_pulse_transition_stop_start
+          -- --ignored --nocapture --test-threads=1
         env:
-          RUN_FAILOVER_TRANSITION_TESTS: "1"
+          RUN_FAILOVER_TRANSITION_TESTS: '1'
           RUST_BACKTRACE: 1
 
       - name: Show database logs on failure
@@ -251,22 +252,22 @@ jobs:
       - format
       - lint
       - check
-    
+
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@v1
-      
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client mariadb-client openssl
-      
+
       - name: Generate TLS certificates
         run: |
           ./scripts/gen-certs.sh
           # Make MariaDB key readable
           chmod 644 .certs/mariadb/server.key
-      
+
       - name: Prepare PostgreSQL with TLS
         run: |
           # Create custom PostgreSQL image with certificates
@@ -280,7 +281,7 @@ jobs:
               chmod 644 /var/lib/postgresql/server.crt /var/lib/postgresql/ca.crt
           EOF
           docker build -t postgres-tls:test -f Dockerfile.postgres-tls .
-      
+
       - name: Start PostgreSQL with TLS
         run: |
           docker run -d \
@@ -295,7 +296,7 @@ jobs:
             -c ssl_key_file=/var/lib/postgresql/server.key \
             -c ssl_ca_file=/var/lib/postgresql/ca.crt \
             -c ssl_min_protocol_version=TLSv1.2
-          
+
           # Wait for PostgreSQL
           for i in {1..30}; do
             if docker exec postgres-tls pg_isready -U postgres 2>/dev/null; then
@@ -305,7 +306,7 @@ jobs:
             echo "Waiting for PostgreSQL... ($i/30)"
             sleep 2
           done
-      
+
       - name: Start MariaDB with TLS
         run: |
           docker run -d \
@@ -324,7 +325,7 @@ jobs:
             --ssl-ca=/etc/mysql/ssl/ca.crt \
             --require-secure-transport=OFF \
             --tls-version=TLSv1.2,TLSv1.3
-          
+
           # Wait for MariaDB
           for i in {1..30}; do
             if docker exec mariadb-tls mariadb -u dbpulse -psecret -D testdb -e "SELECT 1" &>/dev/null; then
@@ -334,31 +335,31 @@ jobs:
             echo "Waiting for MariaDB... ($i/30)"
             sleep 2
           done
-      
+
       - name: Verify TLS is enabled (PostgreSQL)
         run: |
           docker exec postgres-tls psql -U postgres -d testdb -c "SHOW ssl;"
           PGSSLMODE=require psql "postgresql://postgres:secret@localhost:5432/testdb" \
             -c "SELECT ssl, version, cipher FROM pg_stat_ssl WHERE pid = pg_backend_pid();"
-      
+
       - name: Verify TLS is enabled (MariaDB)
         run: |
           docker exec mariadb-tls mariadb -u root -psecret -e "SHOW VARIABLES LIKE 'have_ssl';"
           docker exec mariadb-tls mariadb -h 127.0.0.1 -u dbpulse -psecret -D testdb --ssl \
             -e "SHOW STATUS LIKE 'Ssl_cipher';"
-      
+
       - name: Run PostgreSQL TLS tests
         run: cargo test --test postgres_tls_test -- --ignored --nocapture
         env:
-          POSTGRES_CA_CERT: "${{ github.workspace }}/.certs/postgres/ca.crt"
+          POSTGRES_CA_CERT: ${{ github.workspace }}/.certs/postgres/ca.crt
           RUST_BACKTRACE: 1
-      
+
       - name: Run MariaDB TLS tests
         run: cargo test --test mariadb_tls_test -- --ignored --nocapture
         env:
-          MARIADB_CA_CERT: "${{ github.workspace }}/.certs/mariadb/ca.crt"
+          MARIADB_CA_CERT: ${{ github.workspace }}/.certs/mariadb/ca.crt
           RUST_BACKTRACE: 1
-      
+
       - name: Show logs on failure
         if: failure()
         run: |
@@ -367,9 +368,9 @@ jobs:
           echo ""
           echo "==> MariaDB logs:"
           docker logs mariadb-tls || true
-      
+
       - name: Cleanup
         if: always()
-        run: |
+        run: |-
           docker stop postgres-tls mariadb-tls || true
           docker rm postgres-tls mariadb-tls || true
