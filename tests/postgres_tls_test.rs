@@ -20,7 +20,7 @@ use chrono::Utc;
 use common::*;
 use dbpulse::queries::postgres;
 use dbpulse::tls::cache::CertCache;
-use dbpulse::tls::{TlsConfig, TlsMode};
+use dbpulse::tls::{TlsConfig, TlsMode, TlsProbeProtocol, probe_certificate_expiry};
 use std::env;
 use std::path::PathBuf;
 
@@ -320,4 +320,127 @@ async fn test_tls_connection_info() {
     } else {
         panic!("Expected TLS metadata to be present");
     }
+}
+
+/// DSN for the server whose certificate is signed by the same CA but names
+/// only `db.invalid`, so the chain is valid and only the hostname check fails.
+///
+/// Derived from the primary DSN so a custom `TEST_POSTGRES_DSN` keeps working;
+/// set `TEST_POSTGRES_MISMATCH_DSN` to point somewhere else entirely.
+fn get_postgres_mismatch_dsn(ssl_mode: &str) -> String {
+    env::var("TEST_POSTGRES_MISMATCH_DSN")
+        .unwrap_or_else(|_| get_postgres_tls_dsn(ssl_mode).replace(":5432", ":5433"))
+}
+
+/// `verify-ca` must accept a CA-signed certificate that does not name the host,
+/// *and* must still report certificate expiry.
+///
+/// Regression: expiry is read by a second, independent TLS handshake. When that
+/// probe was given a real verifier it used a strict one, while the actual sqlx
+/// connection sets `accept_invalid_hostnames` for every mode below
+/// `verify-full`. The connection then succeeded while the probe failed, so
+/// `dbpulse_tls_cert_expiry_days` silently disappeared for precisely the
+/// deployments that choose `verify-ca` -- those using an internal CA whose
+/// certificates routinely do not match the connection address. `PostgreSQL` has
+/// no server-side fallback for expiry, so the gauge vanished outright and
+/// "certificate about to expire" alerts stopped firing.
+#[tokio::test]
+#[ignore = "requires PostgreSQL with TLS enabled"]
+async fn test_verify_ca_accepts_hostname_mismatch_and_reports_expiry() {
+    if skip_if_no_postgres() {
+        return;
+    }
+
+    let Some(ca_cert_path) = get_ca_cert_path() else {
+        println!("Skipping test: CA certificate not found");
+        return;
+    };
+
+    let dsn = parse_dsn(&get_postgres_mismatch_dsn("verify-ca"));
+    let tls = TlsConfig {
+        mode: TlsMode::VerifyCA,
+        ca: Some(ca_cert_path),
+        cert: None,
+        key: None,
+    };
+
+    // Probe the server directly first: this is the exact operation that broke,
+    // and asserting on it keeps the test sharp on both engines (MySQL can
+    // backfill expiry from `Ssl_server_not_after`, which would otherwise hide
+    // a failing probe behind a populated metric).
+    let probed = probe_certificate_expiry(&dsn, 5432, TlsProbeProtocol::Postgres, &tls)
+        .await
+        .expect("verify-ca certificate probe must accept a valid chain with a mismatched name");
+    assert!(
+        probed.and_then(|meta| meta.cert_expiry_days).is_some(),
+        "the probe must report certificate expiry under verify-ca"
+    );
+
+    let table_name = test_table_name("test_postgres_tls_verify_ca_mismatch");
+    let result =
+        postgres::test_rw_with_table(&dsn, Utc::now(), 100, &tls, &test_cert_cache(), &table_name)
+            .await;
+
+    assert!(
+        result.is_ok(),
+        "verify-ca must accept a valid chain regardless of hostname: {result:?}"
+    );
+
+    let health = result.unwrap();
+    assert_version_and_uptime("PostgreSQL", &health);
+
+    let tls_meta = health
+        .tls_metadata
+        .expect("TLS metadata should be present under verify-ca");
+
+    let expiry = tls_meta.cert_expiry_days.expect(
+        "cert_expiry_days must be populated under verify-ca: the expiry probe has to accept \
+         exactly what the real connection accepts, otherwise the gauge disappears",
+    );
+    println!("Certificate expires in {expiry} days");
+    assert!(
+        expiry > 0,
+        "test fixture certificate should not be expired, got {expiry} days"
+    );
+}
+
+/// The counterpart of the test above: `verify-full` must still reject the same
+/// certificate. Without this, relaxing the probe could be "fixed" by relaxing
+/// hostname checking everywhere, which would be a security regression.
+#[tokio::test]
+#[ignore = "requires PostgreSQL with TLS enabled"]
+async fn test_verify_full_rejects_hostname_mismatch() {
+    if skip_if_no_postgres() {
+        return;
+    }
+
+    let Some(ca_cert_path) = get_ca_cert_path() else {
+        println!("Skipping test: CA certificate not found");
+        return;
+    };
+
+    let dsn = parse_dsn(&get_postgres_mismatch_dsn("verify-full"));
+    let tls = TlsConfig {
+        mode: TlsMode::VerifyFull,
+        ca: Some(ca_cert_path),
+        cert: None,
+        key: None,
+    };
+
+    assert!(
+        probe_certificate_expiry(&dsn, 5432, TlsProbeProtocol::Postgres, &tls)
+            .await
+            .is_err(),
+        "verify-full probe must reject a certificate that does not name the host"
+    );
+
+    let table_name = test_table_name("test_postgres_tls_verify_full_mismatch");
+    let result =
+        postgres::test_rw_with_table(&dsn, Utc::now(), 100, &tls, &test_cert_cache(), &table_name)
+            .await;
+
+    assert!(
+        result.is_err(),
+        "verify-full must reject a certificate that does not name the host"
+    );
 }

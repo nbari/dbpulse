@@ -63,10 +63,10 @@ dbpulse [OPTIONS] --dsn <DSN>
 
 | Option | Environment Variable | Default | Description |
 |--------|---------------------|---------|-------------|
-| `-i, --interval <SECONDS>` | `DBPULSE_INTERVAL` | `30` | Seconds between health checks |
+| `-i, --interval <SECONDS>` | `DBPULSE_INTERVAL` | `30` | Seconds between health checks (minimum `1`) |
 | `-p, --port <PORT>` | `DBPULSE_PORT` | `9300` | HTTP port for `/metrics` endpoint |
 | `-l, --listen <IP>` | `DBPULSE_LISTEN` | `[::]` | IP address to bind to (supports IPv4 and IPv6) |
-| `-r, --range <RANGE>` | `DBPULSE_RANGE` | `100` | Upper limit for random ID generation (prevents conflicts in multi-instance setups) |
+| `-r, --range <RANGE>` | `DBPULSE_RANGE` | `100` | Upper limit for random ID generation, minimum `1` (separates row IDs in multi-instance setups) |
 | N/A | `DBPULSE_TLS_CERT_CACHE_TTL` | `3600` | TLS certificate cache TTL in seconds (0 to disable caching) |
 
 ### DSN Format
@@ -101,10 +101,10 @@ Configure TLS directly in the DSN query string:
 
 | Parameter | Values | Description |
 |-----------|--------|-------------|
-| `sslmode` | `disable`, `require`, `verify-ca`, `verify-full` | TLS mode (default: `disable`) |
-| `sslrootcert` or `sslca` | `/path/to/ca.crt` | CA certificate for server verification |
-| `sslcert` | `/path/to/client.crt` | Client certificate (mutual TLS) |
-| `sslkey` | `/path/to/client.key` | Client private key (mutual TLS) |
+| `sslmode` or `ssl-mode` | `disable`, `require`, `verify-ca`, `verify-full` | TLS mode (default: `disable`) |
+| `sslrootcert`, `sslca` or `ssl-ca` | `/path/to/ca.crt` | CA certificate for server verification |
+| `sslcert` or `ssl-cert` | `/path/to/client.crt` | Client certificate (mutual TLS) |
+| `sslkey` or `ssl-key` | `/path/to/client.key` | Client private key (mutual TLS) |
 
 **TLS Mode Details:**
 - `disable` - No encryption (plaintext)
@@ -199,7 +199,37 @@ The DSN parser extracts `sslmode`, `sslrootcert`, `sslcert`, and `sslkey` parame
 
 ### 2. Health Check Cycle
 
-Every interval (default: 30 seconds), dbpulse performs health checks:
+Every interval (default: 30 seconds), dbpulse runs one iteration. Time runs
+downwards; everything between the connect and the sleep happens inside a single
+deadline, and the branches show where a check ends early or does extra work.
+
+```mermaid
+sequenceDiagram
+    participant L as dbpulse
+    participant DB as Database
+
+    Note over L,DB: one check, one deadline
+    L->>DB: connect, session timeouts
+    L->>DB: version, uptime, replication lag
+    alt read-only or in recovery
+        DB-->>L: pulse 0, no write attempted
+    else accepting writes
+        L->>DB: INSERT, then SELECT to verify
+        L->>DB: transaction rollback test
+        L->>DB: delete rows older than 1 hour
+        L->>DB: DROP TABLE now and then, exercises DDL
+    end
+    L->>DB: certificate probe, cached 1 hour
+    Note over L,DB: metrics, JSON line, then sleep
+```
+
+Every step runs on every check except the `DROP TABLE` and the certificate
+probe, which is why each one is a single cheap statement.
+
+Those two are rare on purpose. The probe runs once per cache TTL, one hour by
+default. The `DROP TABLE` needs both the first minute of an hour *and* a
+`5`-in-`range` draw, so at the defaults it fires roughly once every ten hours,
+and with `--range 1000` about once every four days.
 
 **Connection #1 - Database Operations (SQLx):**
 - Connects with proper TLS verification based on `sslmode`
@@ -217,7 +247,18 @@ Every interval (default: 30 seconds), dbpulse performs health checks:
 - Cache key: `host:port` combination
 - Reduces from 120 probes/hour to 1 probe/hour with default settings
 
-Both connections use the same TLS configuration from the DSN. The probe connection uses a `NoVerifier` to inspect certificates without validation (actual security happens in Connection #1).
+Both connections use the same TLS configuration from the DSN, and the probe
+applies exactly the checks the real connection applies. Under `verify-ca` and
+`verify-full` the probe validates the certificate chain against the configured
+CA (or the bundled WebPKI roots) before trusting the metadata it reports, so
+`dbpulse_tls_cert_expiry_days` cannot be spoofed by anything in the network
+path. Hostname verification follows the mode as well: only `verify-full`
+requires the certificate to name the host, matching the driver, so a
+`verify-ca` deployment using an internal CA still reports certificate expiry.
+Under `require` there is no trust anchor to check against, so the probe
+inspects the certificate without validating it. A probe that fails verification
+increments `dbpulse_tls_cert_probe_errors_total` and leaves the certificate
+metrics unset rather than reporting unverified values.
 
 **Why two connections?** SQLx doesn't expose peer certificates from its internal TLS stream, so certificate metadata must be extracted separately.
 
@@ -250,9 +291,26 @@ export DBPULSE_TLS_CERT_CACHE_TTL=0
 Results are merged and exposed as Prometheus metrics on `/metrics`:
 - Health status, latency, error rates
 - TLS version, cipher suite (from Connection #1)
-- Certificate subject, issuer, expiry days (from Connection #2, cached)
+- Certificate expiry days (from Connection #2, cached)
 
 ---
+
+### 5. Pulse Line on stdout
+
+Each completed check prints one JSON line, intended for log collection:
+
+```json
+{"runtime_ms":42,"time":"2026-09-01T09:08:52Z","version":"18.4 (Debian 18.4-1.pgdg13+1)","uptime_seconds":3600}
+```
+
+`uptime_seconds`, `tls_version` and `tls_cipher` appear when the database
+reports them. When the server is not accepting writes, two more fields appear:
+
+```json
+{"runtime_ms":39,...,"read_only":true,"read_only_reason":"Transaction read-only mode enabled"}
+```
+
+Both are omitted while the database is writable.
 
 ## What It Monitors
 
@@ -269,17 +327,26 @@ Every interval, dbpulse performs a quick vital signs check:
 7. **Cleanup** 🧹 - Deletes old records (keeps table size bounded)
 
 **Timeout Protection:**
+- Whole check: bounded by the configured `--interval`, never less than 5s
 - PostgreSQL: 5s statement timeout, 2s lock timeout
 - MySQL/MariaDB: 5s max execution time, 2s lock wait timeout
 
-These timeouts prevent the health probe from hanging on locked tables.
+The server-side statement and lock timeouts prevent the probe from hanging on
+locked tables. They are applied with `SET SESSION` and so only take effect once
+a connection exists; the client-side deadline additionally bounds the TCP
+connect and TLS handshake, so a server that accepts connections and then goes
+silent is reported as a `timeout` error instead of stalling the monitoring loop.
+
+**Backoff:** if a check overruns the interval, the loop still pauses for at
+least one second before the next one. dbpulse never runs checks back to back,
+so a struggling database is not hammered by its own health probe.
 
 ### Operational Metrics (Best-effort)
 
 In addition to health checks, dbpulse collects:
 
 - **Replication Lag** - For replica databases only (PostgreSQL: `pg_last_xact_replay_timestamp()`, MySQL: `SHOW REPLICA STATUS`)
-- **Blocking Queries** - Count of queries currently blocking others
+- **Blocked Sessions** - Count of sessions currently waiting on a lock
 - **Database Size** - Total database size in bytes
 - **Table Size** - Monitoring table size and row count
 - **Connection Duration** - How long connections are held open
@@ -297,10 +364,13 @@ dbpulse exposes comprehensive Prometheus-compatible metrics on the `/metrics` en
 |--------|------|-------------|
 | `dbpulse_pulse` | Gauge | Binary health status (1=healthy, 0=unhealthy) |
 | `dbpulse_runtime` | Histogram | Total health check duration (seconds) |
+| `dbpulse_runtime_last_milliseconds` | Gauge | Duration of the most recent check, in milliseconds |
 | `dbpulse_iterations_total` | Counter | Total checks by status (success/error) |
 | `dbpulse_last_success_timestamp_seconds` | Gauge | Unix timestamp of last successful check |
 | `dbpulse_database_readonly` | Gauge | Read-only mode indicator (1=read-only, 0=read-write) |
-| `dbpulse_database_host_info` | Gauge | Current backend host serving the connection (label: `host`) |
+| `dbpulse_database_host_info` | Gauge | Current backend host serving the connection (labels: `database`, `host`) |
+| `dbpulse_database_version_info` | Gauge | Server version as a label (labels: `database`, `version`) |
+| `dbpulse_database_uptime_seconds` | Gauge | Server uptime in seconds |
 
 ### Performance Metrics
 
@@ -308,7 +378,6 @@ dbpulse exposes comprehensive Prometheus-compatible metrics on the `/metrics` en
 |--------|------|-------------|
 | `dbpulse_operation_duration_seconds` | Histogram | Duration by operation (connect, insert, select, etc.) |
 | `dbpulse_connection_duration_seconds` | Histogram | How long connections are held open |
-| `dbpulse_connections_active` | Gauge | Currently active database connections |
 
 ### Database Operations
 
@@ -323,14 +392,17 @@ dbpulse exposes comprehensive Prometheus-compatible metrics on the `/metrics` en
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `dbpulse_replication_lag_seconds` | Histogram | Replication lag for replica databases |
-| `dbpulse_blocking_queries` | Gauge | Number of queries currently blocking others |
+| `dbpulse_replication_lag_seconds` | Gauge | Replication lag in seconds for replica databases |
+| `dbpulse_blocked_sessions` | Gauge | Number of sessions currently waiting on a lock |
 
 ### Error Tracking
 
 | Metric | Type | Description |
 |--------|------|-------------|
 | `dbpulse_errors_total` | Counter | Total errors by type (authentication, timeout, connection, transaction, query) |
+| `dbpulse_table_recreated_total` | Counter | Times the monitoring table vanished mid-check and was recreated |
+| `dbpulse_table_maintenance_errors_total` | Counter | Failures of the periodic table maintenance (labels: `database`, `operation`) |
+| `dbpulse_rw_row_contention_total` | Counter | Times the read/write row was overwritten by another writer |
 | `dbpulse_panics_recovered_total` | Counter | Total panics recovered from |
 
 ### TLS/SSL Metrics
@@ -339,8 +411,25 @@ dbpulse exposes comprehensive Prometheus-compatible metrics on the `/metrics` en
 |--------|------|-------------|
 | `dbpulse_tls_handshake_duration_seconds` | Histogram | TLS handshake duration |
 | `dbpulse_tls_connection_errors_total` | Counter | TLS-specific connection errors |
-| `dbpulse_tls_info` | Gauge | TLS version and cipher suite (labels: version, cipher) |
+| `dbpulse_tls_info` | Gauge | TLS version and cipher suite (labels: `database`, `version`, `cipher`) |
 | `dbpulse_tls_cert_expiry_days` | Gauge | Days until TLS certificate expiration (negative if expired) |
+| `dbpulse_tls_cert_probe_errors_total` | Counter | Failed certificate probes by stage (labels: `database`, `error_type`) |
+
+Every metric is created at startup, so an alert such as `dbpulse_pulse == 0`
+matches a real series from the very first scrape even if the database was never
+reachable. Most metrics carry a `database` label (`mysql` or `postgres`); the
+process-level ones — `dbpulse_pulse`, `dbpulse_runtime`,
+`dbpulse_connection_duration_seconds` and `dbpulse_panics_recovered_total` —
+describe dbpulse itself and are unlabelled.
+
+Labelled metrics only export a line once a label combination exists. The
+combinations needed for alerting (`dbpulse_iterations_total`,
+`dbpulse_errors_total`, `dbpulse_database_readonly`,
+`dbpulse_last_success_timestamp_seconds`, `dbpulse_runtime_last_milliseconds`,
+`dbpulse_table_recreated_total`, `dbpulse_rw_row_contention_total` and
+`dbpulse_table_maintenance_errors_total`) are pre-created for the monitored
+database. Others — such as `dbpulse_replication_lag_seconds` on a standalone
+server — appear only when they become meaningful.
 
 For complete documentation, PromQL examples, and alert rules, see [grafana/README.md](grafana/README.md).
 
@@ -493,19 +582,18 @@ dbpulse --dsn "mysql://dbpulse:secret@tcp(localhost:3306)/dbpulse"
 
 ## Monitoring Table
 
-dbpulse creates and manages a table named `dbpulse_rw` (or custom name if using multiple instances) with this schema:
+dbpulse creates and manages a table named `dbpulse_rw` with this schema:
 
 **PostgreSQL:**
 ```sql
 CREATE TABLE IF NOT EXISTS dbpulse_rw (
-    id INT NOT NULL,
+    id INT NOT NULL PRIMARY KEY,
     t1 BIGINT NOT NULL,
-    t2 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    uuid UUID,
-    PRIMARY KEY(id)
+    t2 TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    uuid UUID NOT NULL,
+    CONSTRAINT dbpulse_rw_uuid_unique UNIQUE (uuid)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_uuid ON dbpulse_rw(uuid);
-CREATE INDEX IF NOT EXISTS idx_t2 ON dbpulse_rw(t2);
+CREATE INDEX IF NOT EXISTS idx_dbpulse_rw_t2 ON dbpulse_rw(t2);
 ```
 
 **MySQL/MariaDB:**
@@ -524,20 +612,59 @@ CREATE TABLE IF NOT EXISTS dbpulse_rw (
 ### Table Cleanup
 
 The table is automatically maintained:
-- **Hourly cleanup**: Records older than 1 hour are deleted (LIMIT 10000 per check)
-- **Periodic drop**: Table is completely dropped and recreated every hour (when row count < 100k and at minute 0)
-- **Bounded growth**: Table size remains small even with frequent checks
+- **Every check**: records whose `t2` is older than 1 hour are deleted (`LIMIT 10000` per check)
+- **Bounded growth**: writes are upserts over the ID space `0..range`, so the table holds at most `range` rows, and in practice roughly one row per check within the retention window. A default deployment keeps it in the tens of kilobytes
+- **Periodic drop**: at minute 0, with a 5-in-`range` chance per check and a row count below 100k, the table is dropped and recreated on the next check
 
-### Custom Table Names
+The periodic drop is a health check in its own right, not just housekeeping: it
+exercises DDL. A Galera cluster that stalls on DDL, or a node under flow
+control, shows up here as a failed or slow check, which is one of the conditions
+dbpulse exists to detect.
 
-Use different table names for multiple monitoring instances:
+Note how infrequent those two conditions make it. At the defaults two checks
+fall inside minute 0 and each has a 5-in-100 chance, so a drop happens roughly
+once every ten hours; with `--range 1000` it is closer to once every four days,
+because the chance is `5/range`. Raising `--range` to separate instances also
+makes the DDL check rarer. The gate reads the wall-clock minute rather than
+tracking elapsed time, so an interval that divides an hour with a non-zero
+offset never sees minute 0 at all: `--interval 1800` starting at minute 15 lands
+on 15, 45, 15, ... and never drops.
+
+### Running Multiple Instances
+
+All instances against the same database share the table `dbpulse_rw`; the name
+is not configurable. `--range` bounds the **row IDs** an instance writes: each
+check picks a random ID in `0..range`, so it caps how large the table grows —
+it does **not** give each instance a private slice of IDs.
+
 ```sh
-# Instance 1
+# Both instances use the table dbpulse_rw in the same database.
 dbpulse --dsn "postgres://user:pass@tcp(db:5432)/dbpulse" --range 1000
-
-# Instance 2 (different range = different table name)
 dbpulse --dsn "postgres://user:pass@tcp(db:5432)/dbpulse" --range 2000
 ```
+
+Because every range starts at zero, two instances *will* occasionally pick the
+same ID. If the second overwrites the row in the window between the first
+instance's write and its read-back, the first counts
+`dbpulse_rw_row_contention_total{database}` and continues rather than reporting
+a failure — the row it wrote is gone, but the database did nothing wrong. A
+read-back that returns data *older* than what was written is still a hard
+failure, since no concurrent writer can explain it.
+
+A high contention rate means `--range` is too small for the number of
+instances; a nonzero value on a single-instance deployment means something else
+is writing to the table.
+
+Because the table is shared, one instance's periodic drop can land while another
+is mid-check. That instance recreates the table and retries once rather than
+reporting a failure, and counts the event on
+`dbpulse_table_recreated_total{database}`. A nonzero value on a single-instance
+deployment means something other than dbpulse is dropping the table.
+
+Maintenance that fails outright — the periodic row count or `DROP TABLE` being
+refused, for example by a permission change — is counted on
+`dbpulse_table_maintenance_errors_total{database,operation}` rather than failing
+the health check.
 
 ## Deployment
 

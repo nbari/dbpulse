@@ -154,20 +154,6 @@ histogram_quantile(0.95,
 
 ### Connection Lifecycle Metrics
 
-#### `dbpulse_connections_active` (Gauge)
-**Description:** Currently active database connections
-
-**Expected Value:** Typically `0` or `1` (connections are opened and closed per iteration)
-
-**Query Examples:**
-```promql
-# Current active connections
-dbpulse_connections_active
-
-# Alert if connection held too long
-dbpulse_connections_active > 0
-```
-
 #### `dbpulse_connection_duration_seconds` (Histogram)
 **Description:** Total time connection is held open
 
@@ -415,16 +401,33 @@ min(dbpulse_tls_cert_expiry_days)
     description: "Last success: {{ $value | humanizeDuration }}"
 ```
 
-#### Connection Leak Suspected
+#### Connection Held Too Long
 ```yaml
-- alert: ConnectionLeakSuspected
-  expr: dbpulse_connections_active > 0
-  for: 1m
+- alert: ConnectionHeldTooLong
+  expr: |
+    histogram_quantile(0.95,
+      rate(dbpulse_connection_duration_seconds_bucket[5m])) > 5
+  for: 5m
   labels:
     severity: warning
   annotations:
-    summary: "Database connection held for >1 minute"
-    description: "Possible connection leak detected"
+    summary: "Database connections are being held for >5s"
+    description: "Checks are taking far longer than usual to complete"
+```
+
+#### Monitoring Table Dropped Unexpectedly
+```yaml
+# dbpulse drops its own table hourly to exercise DDL, and recovers from a
+# concurrent instance doing so. On a single-instance deployment a sustained
+# rate here means something else is dropping the table.
+- alert: MonitoringTableDroppedUnexpectedly
+  expr: rate(dbpulse_table_recreated_total[1h]) > 0
+  for: 2h
+  labels:
+    severity: warning
+  annotations:
+    summary: "dbpulse keeps having to recreate {{ $labels.database }}'s table"
+    description: "Another process may be dropping dbpulse_rw"
 ```
 
 ### Warning Alerts

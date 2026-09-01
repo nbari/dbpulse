@@ -39,6 +39,25 @@ openssl x509 -req -days 3650 \
 chmod 600 server.key ca.key
 chmod 644 server.crt ca.crt
 
+# Server certificate whose SAN deliberately does NOT cover the address the
+# tests connect to. Signed by the same CA, so the chain is valid and only the
+# hostname check fails -- this is what separates verify-ca from verify-full.
+openssl req -new -nodes \
+    -out server-othername.csr \
+    -keyout server-othername.key \
+    -subj "/CN=db.invalid"
+
+openssl x509 -req -days 3650 \
+    -in server-othername.csr \
+    -CA ca.crt \
+    -CAkey ca.key \
+    -CAcreateserial \
+    -out server-othername.crt \
+    -extfile <(printf "subjectAltName=DNS:db.invalid")
+
+chmod 600 server-othername.key
+chmod 644 server-othername.crt
+
 # Client certificate (optional, for mutual TLS testing)
 openssl req -new -nodes \
     -out client.csr \
@@ -87,6 +106,25 @@ openssl x509 -req -days 3650 \
 # Set proper permissions
 chmod 644 *.crt
 chmod 600 *.key
+
+# Server certificate whose SAN deliberately does NOT cover the address the
+# tests connect to. Signed by the same CA, so the chain is valid and only the
+# hostname check fails -- this is what separates verify-ca from verify-full.
+openssl req -new -nodes \
+    -out server-othername.csr \
+    -keyout server-othername.key \
+    -subj "/CN=db.invalid"
+
+openssl x509 -req -days 3650 \
+    -in server-othername.csr \
+    -CA ca.crt \
+    -CAkey ca.key \
+    -CAcreateserial \
+    -out server-othername.crt \
+    -extfile <(printf "subjectAltName=DNS:db.invalid")
+
+chmod 644 server-othername.crt
+chmod 600 server-othername.key
 
 # Client certificate (optional)
 openssl req -new -nodes \

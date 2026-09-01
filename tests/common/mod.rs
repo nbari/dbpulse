@@ -4,7 +4,12 @@ use chrono::Utc;
 use dbpulse::queries::{HealthCheckResult, mysql, postgres};
 use dbpulse::tls::{TlsConfig, TlsMode, cache::CertCache};
 use dsn::DSN;
-use std::{env, path::PathBuf, process::Command};
+use std::{
+    env,
+    path::PathBuf,
+    process::Command,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -289,4 +294,50 @@ pub fn assert_version_and_uptime(db_label: &str, health: &HealthCheckResult) {
         uptime >= 0,
         "{db_label} uptime_seconds must be non-negative: {uptime}"
     );
+}
+
+/// Standard connection URLs for tests that need a second, raw connection to
+/// interfere with the table while a health check is running.
+pub const POSTGRES_URL: &str = "postgres://postgres:secret@127.0.0.1:5432/testdb";
+pub const MARIADB_URL: &str = "mysql://dbpulse:secret@127.0.0.1:3306/testdb";
+
+/// Repeatedly drop `table_name` from a separate connection until told to stop,
+/// imitating another dbpulse instance running its hourly DDL check against the
+/// shared table.
+///
+/// The pause between drops must comfortably exceed one check, so a check
+/// interrupted by a drop can recreate the table and retry without a second drop
+/// landing on the retry. Callers derive it from a measured check rather than
+/// hardcoding it: check duration varies by an order of magnitude between a
+/// plain debug build and a coverage-instrumented one. Production drops are at
+/// most twice an hour, so back-to-back drops are not a case worth reproducing.
+pub async fn drop_postgres_table_until(table_name: &str, pause: Duration, stop: &AtomicBool) {
+    use sqlx::{Connection, PgConnection};
+
+    let mut conn = PgConnection::connect(POSTGRES_URL)
+        .await
+        .expect("failed to open the interfering PostgreSQL connection");
+    while !stop.load(Ordering::Relaxed) {
+        sleep(pause).await;
+        let sql = format!("DROP TABLE IF EXISTS {table_name}");
+        let _ = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut conn)
+            .await;
+    }
+}
+
+/// MySQL/MariaDB counterpart of [`drop_postgres_table_until`].
+pub async fn drop_mysql_table_until(table_name: &str, pause: Duration, stop: &AtomicBool) {
+    use sqlx::{Connection, MySqlConnection};
+
+    let mut conn = MySqlConnection::connect(MARIADB_URL)
+        .await
+        .expect("failed to open the interfering MariaDB connection");
+    while !stop.load(Ordering::Relaxed) {
+        sleep(pause).await;
+        let sql = format!("DROP TABLE IF EXISTS {table_name}");
+        let _ = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&mut conn)
+            .await;
+    }
 }

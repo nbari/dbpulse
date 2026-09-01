@@ -20,7 +20,7 @@ use chrono::Utc;
 use common::*;
 use dbpulse::queries::mysql;
 use dbpulse::tls::cache::CertCache;
-use dbpulse::tls::{TlsConfig, TlsMode};
+use dbpulse::tls::{TlsConfig, TlsMode, TlsProbeProtocol, probe_certificate_expiry};
 use std::env;
 use std::path::PathBuf;
 
@@ -360,4 +360,124 @@ async fn test_tls_cipher_suite() {
             println!("Warning: Not using ECDHE cipher suite");
         }
     }
+}
+
+/// DSN for the server whose certificate is signed by the same CA but names
+/// only `db.invalid`, so the chain is valid and only the hostname check fails.
+///
+/// Derived from the primary DSN so a custom `TEST_MARIADB_DSN` keeps working;
+/// set `TEST_MARIADB_MISMATCH_DSN` to point somewhere else entirely.
+fn get_mariadb_mismatch_dsn(ssl_mode: &str) -> String {
+    env::var("TEST_MARIADB_MISMATCH_DSN")
+        .unwrap_or_else(|_| get_mariadb_tls_dsn(ssl_mode).replace(":3306", ":3307"))
+}
+
+/// `VERIFY_CA` must accept a CA-signed certificate that does not name the host,
+/// *and* must still report certificate expiry.
+///
+/// Regression: expiry is read by a second, independent TLS handshake. When that
+/// probe was given a real verifier it used a strict one, while the actual sqlx
+/// connection sets `accept_invalid_hostnames` for every mode below
+/// `VERIFY_IDENTITY`. The connection then succeeded while the probe failed --
+/// precisely for the deployments that choose `VERIFY_CA`, which use an internal
+/// CA whose certificates routinely do not match the connection address.
+///
+/// On MySQL/MariaDB the damage is easy to miss, because expiry is backfilled
+/// from the `Ssl_server_not_after` status variable and the metric stays
+/// populated while `dbpulse_tls_cert_probe_errors_total` climbs. The probe is
+/// therefore asserted directly, not just its effect on the health check.
+#[tokio::test]
+#[ignore = "requires MariaDB with TLS enabled"]
+async fn test_verify_ca_accepts_hostname_mismatch_and_reports_expiry() {
+    if skip_if_no_mariadb() {
+        return;
+    }
+
+    let Some(ca_cert_path) = get_ca_cert_path() else {
+        println!("Skipping test: CA certificate not found");
+        return;
+    };
+
+    let dsn = parse_dsn(&get_mariadb_mismatch_dsn("VERIFY_CA"));
+    let tls = TlsConfig {
+        mode: TlsMode::VerifyCA,
+        ca: Some(ca_cert_path),
+        cert: None,
+        key: None,
+    };
+
+    let probed = probe_certificate_expiry(&dsn, 3306, TlsProbeProtocol::Mysql, &tls)
+        .await
+        .expect("VERIFY_CA certificate probe must accept a valid chain with a mismatched name");
+    assert!(
+        probed.and_then(|meta| meta.cert_expiry_days).is_some(),
+        "the probe must report certificate expiry under VERIFY_CA"
+    );
+
+    let table_name = test_table_name("test_mariadb_tls_verify_ca_mismatch");
+    let result =
+        mysql::test_rw_with_table(&dsn, Utc::now(), 100, &tls, &test_cert_cache(), &table_name)
+            .await;
+
+    assert!(
+        result.is_ok(),
+        "VERIFY_CA must accept a valid chain regardless of hostname: {result:?}"
+    );
+
+    let health = result.unwrap();
+    assert_version_and_uptime("MariaDB", &health);
+
+    let tls_meta = health
+        .tls_metadata
+        .expect("TLS metadata should be present under VERIFY_CA");
+
+    let expiry = tls_meta
+        .cert_expiry_days
+        .expect("cert_expiry_days must be populated under VERIFY_CA");
+    println!("Certificate expires in {expiry} days");
+    assert!(
+        expiry > 0,
+        "test fixture certificate should not be expired, got {expiry} days"
+    );
+}
+
+/// The counterpart of the test above: `VERIFY_IDENTITY` must still reject the
+/// same certificate. Without this, relaxing the probe could be "fixed" by
+/// relaxing hostname checking everywhere, which would be a security regression.
+#[tokio::test]
+#[ignore = "requires MariaDB with TLS enabled"]
+async fn test_verify_full_rejects_hostname_mismatch() {
+    if skip_if_no_mariadb() {
+        return;
+    }
+
+    let Some(ca_cert_path) = get_ca_cert_path() else {
+        println!("Skipping test: CA certificate not found");
+        return;
+    };
+
+    let dsn = parse_dsn(&get_mariadb_mismatch_dsn("VERIFY_IDENTITY"));
+    let tls = TlsConfig {
+        mode: TlsMode::VerifyFull,
+        ca: Some(ca_cert_path),
+        cert: None,
+        key: None,
+    };
+
+    assert!(
+        probe_certificate_expiry(&dsn, 3306, TlsProbeProtocol::Mysql, &tls)
+            .await
+            .is_err(),
+        "VERIFY_IDENTITY probe must reject a certificate that does not name the host"
+    );
+
+    let table_name = test_table_name("test_mariadb_tls_verify_full_mismatch");
+    let result =
+        mysql::test_rw_with_table(&dsn, Utc::now(), 100, &tls, &test_cert_cache(), &table_name)
+            .await;
+
+    assert!(
+        result.is_err(),
+        "VERIFY_IDENTITY must reject a certificate that does not name the host"
+    );
 }

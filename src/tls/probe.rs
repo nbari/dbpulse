@@ -1,9 +1,9 @@
-use super::{TlsConfig, TlsMetadata};
+use super::{TlsConfig, TlsMetadata, TlsMode, verifier::CertCapturingVerifier};
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use dsn::DSN;
 use rustls::{
-    ClientConfig, DigitallySignedStruct, SignatureScheme,
+    ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme,
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime},
 };
@@ -13,11 +13,13 @@ use std::{
     net::IpAddr,
     path::Path,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 use tokio::{
     fs,
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
+    time::{Instant, timeout},
 };
 use tokio_rustls::{TlsConnector, client::TlsStream};
 use x509_parser::prelude::{FromDer, X509Certificate};
@@ -32,6 +34,57 @@ const MYSQL_CLIENT_PROTOCOL_41: u32 = 0x0000_0200;
 const MYSQL_CLIENT_SECURE_CONNECTION: u32 = 0x0000_8000;
 const MYSQL_CLIENT_LONG_FLAG: u32 = 0x0000_0004;
 const MYSQL_CLIENT_PLUGIN_AUTH: u32 = 0x0008_0000;
+
+/// Longest the certificate probe may take before it is abandoned.
+///
+/// The probe is best-effort metadata collection that runs *after* every
+/// required database operation has already succeeded, but still inside the
+/// check deadline. Without its own bound, a server that accepts the TCP
+/// connection and then stalls (a half-open connection, a wedged TLS
+/// terminator) would burn the entire deadline and turn a completed, healthy
+/// check into `pulse=0` with `error_type="timeout"`.
+///
+/// This is only the *ceiling*. The budget actually used is the smaller of this
+/// and whatever remains of the check deadline (see [`remaining_probe_budget`]),
+/// because the deadline is consumed cumulatively: a check that has already
+/// spent 4s of a 5s allowance has 1s left, not 3s.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Below this there is no point starting a probe: a TCP connect plus TLS
+/// handshake will not finish, and attempting it only risks overrunning the
+/// deadline that the required work already satisfied.
+const MIN_PROBE_BUDGET: Duration = Duration::from_millis(250);
+
+tokio::task_local! {
+    /// When the enclosing health check must be finished.
+    ///
+    /// Set by the pulse loop around the whole check so best-effort work deep in
+    /// the query modules can see the same deadline without threading an extra
+    /// argument through every call site.
+    pub static CHECK_DEADLINE: Instant;
+}
+
+/// How long the probe may run: whatever is left of the check deadline, capped
+/// at [`PROBE_TIMEOUT`].
+///
+/// Returns `None` when too little remains to be worth starting.
+fn remaining_probe_budget() -> Option<Duration> {
+    let Ok(deadline) = CHECK_DEADLINE.try_with(|deadline| *deadline) else {
+        // No deadline in scope (unit tests, direct calls): fall back to the
+        // fixed ceiling, which is the old behaviour.
+        return Some(PROBE_TIMEOUT);
+    };
+
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining < MIN_PROBE_BUDGET {
+        None
+    } else {
+        Some(remaining.min(PROBE_TIMEOUT))
+    }
+}
+
+/// Seconds in a day, used to floor the certificate expiry gauge.
+const SECONDS_PER_DAY: i64 = 86_400;
 
 static CRYPTO_PROVIDER_INIT: OnceLock<()> = OnceLock::new();
 
@@ -61,14 +114,39 @@ pub enum TlsProbeProtocol {
     Mysql,
 }
 
-/// Perform a lightweight TLS handshake (without certificate verification) to extract
-/// certificate metadata including subject, issuer, and expiry.
+/// Perform a lightweight TLS handshake to extract certificate metadata
+/// including subject, issuer, and expiry.
+///
+/// The handshake is verified according to `tls.mode`, matching what the real
+/// database connection enforces. The whole probe is bounded by
+/// [`PROBE_TIMEOUT`] so a stalled server cannot consume the caller's deadline.
 ///
 /// # Errors
 ///
-/// Returns an error if the TCP connection, STARTTLS negotiation, TLS handshake,
-/// or certificate parsing fails.
+/// Returns an error if the probe times out, or if the TCP connection, STARTTLS
+/// negotiation, TLS handshake, or certificate parsing fails.
 pub async fn probe_certificate_expiry(
+    dsn: &DSN,
+    default_port: u16,
+    protocol: TlsProbeProtocol,
+    tls: &TlsConfig,
+) -> Result<Option<TlsMetadata>> {
+    let Some(budget) = remaining_probe_budget() else {
+        // Not enough of the check deadline left to attempt a handshake. The
+        // required work already succeeded; spending the remainder here would
+        // fail an otherwise healthy check.
+        return Ok(None);
+    };
+
+    timeout(
+        budget,
+        probe_certificate_expiry_inner(dsn, default_port, protocol, tls),
+    )
+    .await
+    .map_err(|_| anyhow!("TLS certificate probe timed out after {budget:?} ({protocol:?})"))?
+}
+
+async fn probe_certificate_expiry_inner(
     dsn: &DSN,
     default_port: u16,
     protocol: TlsProbeProtocol,
@@ -235,12 +313,57 @@ fn parse_mysql_handshake(payload: &[u8]) -> Result<(u32, u8)> {
     Ok((capabilities, charset))
 }
 
+/// Build the root store used to verify the probe's TLS handshake.
+///
+/// Uses the operator-supplied CA when the DSN provides one (`sslrootcert` /
+/// `sslca`), otherwise the bundled `WebPKI` roots.
+async fn probe_root_store(tls: &TlsConfig) -> Result<RootCertStore> {
+    let Some(ca_path) = tls.ca.as_deref() else {
+        return Ok(webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect());
+    };
+
+    let mut store = RootCertStore::empty();
+    for cert in load_cert_chain(ca_path).await? {
+        store
+            .add(cert)
+            .map_err(|e| anyhow!("invalid CA certificate {}: {e}", ca_path.display()))?;
+    }
+    if store.is_empty() {
+        anyhow::bail!("no usable CA certificates in {}", ca_path.display());
+    }
+    Ok(store)
+}
+
 async fn build_tls_connector(tls: &TlsConfig) -> Result<TlsConnector> {
     ensure_crypto_provider();
 
-    let builder = ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(NoVerifier));
+    // Under verify-ca / verify-full the operator has asked for an authenticated
+    // server, and the certificate metadata this probe feeds into
+    // dbpulse_tls_cert_expiry_days must be trustworthy: an unverified handshake
+    // lets anyone in the path report a comfortable expiry for a certificate
+    // that is about to lapse. Under `require` there is no trust anchor to check
+    // against, so inspection stays unverified, as documented.
+    //
+    // Hostname checking has to follow the driver, not our own preference: sqlx
+    // enforces it for verify-full only (`accept_invalid_hostnames =
+    // !matches!(mode, VerifyFull)`). Verifying more strictly than the real
+    // connection would make the probe fail on a certificate the database
+    // accepts, silently dropping dbpulse_tls_cert_expiry_days for exactly the
+    // operators who asked for verification.
+    let builder = match tls.mode {
+        TlsMode::VerifyCA | TlsMode::VerifyFull => {
+            let verifier = CertCapturingVerifier::with_root_certificates(
+                probe_root_store(tls).await?,
+                matches!(tls.mode, TlsMode::VerifyCA),
+            )?;
+            ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(verifier))
+        }
+        TlsMode::Disable | TlsMode::Require => ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerifier)),
+    };
 
     let config = if let (Some(cert_path), Some(key_path)) = (&tls.cert, &tls.key) {
         let certs = load_cert_chain(cert_path.as_path()).await?;
@@ -332,7 +455,25 @@ fn calculate_expiry_days(cert_der: &[u8]) -> Result<i64> {
     let not_after = chrono::DateTime::<Utc>::from_timestamp(raw.unix_timestamp(), raw.nanosecond())
         .ok_or_else(|| anyhow!("invalid certificate expiry timestamp"))?;
     let remaining = not_after - Utc::now();
-    Ok(remaining.num_days())
+    Ok(expiry_days_from_remaining(remaining))
+}
+
+/// Convert "time left before `not_after`" into the whole days reported by
+/// `dbpulse_tls_cert_expiry_days`.
+///
+/// Floors rather than truncating. `Duration::num_days` rounds toward zero, so a
+/// certificate that expired an hour ago reported `0` -- identical to one with
+/// 23 hours still to run. The documented alerts are `< 30 and > 0` for
+/// "expiring" and `< 0` for "expired", so for the whole first day after expiry
+/// a dead certificate matched neither and nobody was paged. Flooring guarantees
+/// an expired certificate is always `<= -1` while still reporting `0` for "less
+/// than a day left".
+///
+/// Shared by every path that turns a certificate `not_after` into days -- the
+/// probe, the capturing verifier, and the MySQL `Ssl_server_not_after`
+/// fallback -- so the boundary behaviour cannot drift between them again.
+pub(crate) fn expiry_days_from_remaining(remaining: chrono::Duration) -> i64 {
+    remaining.num_seconds().div_euclid(SECONDS_PER_DAY)
 }
 
 /// Custom certificate verifier that accepts any certificate without validation.
@@ -505,5 +646,96 @@ mod tests {
         let proto = TlsProbeProtocol::Mysql;
         let debug_str = format!("{proto:?}");
         assert!(debug_str.contains("Mysql"));
+    }
+
+    /// Regression: an expired certificate must never report `0` days.
+    ///
+    /// `Duration::num_days` truncates toward zero, so everything in the 24
+    /// hours *after* expiry rounded up to `0`. The documented alerts are
+    /// `< 30 and > 0` (expiring) and `< 0` (expired); `0` matches neither, so
+    /// a certificate that had just lapsed was invisible to both for a full day
+    /// -- precisely the window in which someone needs to be told.
+    #[test]
+    fn a_just_expired_certificate_reports_a_negative_day_count() {
+        for hours_ago in [1, 6, 23] {
+            let days = expiry_days_from_remaining(chrono::Duration::hours(-hours_ago));
+            assert!(
+                days < 0,
+                "expired {hours_ago}h ago should be negative, got {days}"
+            );
+        }
+    }
+
+    /// The other half of the same boundary: still valid, however briefly, must
+    /// not be reported as expired.
+    #[test]
+    fn a_certificate_with_less_than_a_day_left_reports_zero() {
+        for hours_left in [1, 6, 23] {
+            let days = expiry_days_from_remaining(chrono::Duration::hours(hours_left));
+            assert_eq!(days, 0, "{hours_left}h left should floor to 0, got {days}");
+        }
+    }
+
+    /// Regression: the probe budget must shrink with the check deadline.
+    ///
+    /// `PROBE_TIMEOUT` was applied as a flat 3s starting whenever the probe
+    /// happened to run. Because the deadline is consumed cumulatively, a check
+    /// that had already spent 4s of its 5s allowance would grant the probe 3s
+    /// more and blow the deadline -- failing a check whose required work had
+    /// already succeeded, purely to collect optional metadata.
+    #[tokio::test]
+    async fn probe_budget_is_capped_by_the_remaining_check_deadline() {
+        let deadline = Instant::now() + Duration::from_millis(800);
+        let budget = CHECK_DEADLINE
+            .scope(deadline, async { remaining_probe_budget() })
+            .await
+            .expect("800ms is worth probing");
+
+        assert!(
+            budget <= Duration::from_millis(800),
+            "budget {budget:?} must not exceed the time left in the check"
+        );
+        assert!(
+            budget < PROBE_TIMEOUT,
+            "budget must shrink below the ceiling"
+        );
+    }
+
+    /// With plenty of deadline left the ceiling still applies.
+    #[tokio::test]
+    async fn probe_budget_is_capped_by_the_ceiling() {
+        let deadline = Instant::now() + Duration::from_secs(600);
+        let budget = CHECK_DEADLINE
+            .scope(deadline, async { remaining_probe_budget() })
+            .await
+            .expect("plenty of time remains");
+
+        assert_eq!(budget, PROBE_TIMEOUT);
+    }
+
+    /// With effectively no deadline left the probe is skipped rather than
+    /// started, so it cannot be the reason a healthy check is failed.
+    #[tokio::test]
+    async fn probe_is_skipped_when_the_deadline_is_nearly_spent() {
+        let deadline = Instant::now() + Duration::from_millis(10);
+        let budget = CHECK_DEADLINE
+            .scope(deadline, async { remaining_probe_budget() })
+            .await;
+
+        assert!(budget.is_none(), "should skip, got {budget:?}");
+    }
+
+    /// Outside a check (unit tests, direct calls) the ceiling is used.
+    #[test]
+    fn probe_budget_falls_back_to_the_ceiling_without_a_deadline() {
+        assert_eq!(remaining_probe_budget(), Some(PROBE_TIMEOUT));
+    }
+
+    #[test]
+    fn whole_day_counts_are_unchanged() {
+        assert_eq!(expiry_days_from_remaining(chrono::Duration::days(30)), 30);
+        assert_eq!(expiry_days_from_remaining(chrono::Duration::days(1)), 1);
+        assert_eq!(expiry_days_from_remaining(chrono::Duration::zero()), 0);
+        assert_eq!(expiry_days_from_remaining(chrono::Duration::days(-1)), -1);
     }
 }

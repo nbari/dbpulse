@@ -5,6 +5,8 @@ default: test
 test: clippy fmt
   @echo "🧪 Running unit tests..."
   @cargo test --lib --bins
+  @echo "🧪 Running loop regression tests..."
+  @cargo test --test timeout_regression_test
   @echo "🧪 Running integration tests..."
   @just test-integration
   @echo "🧪 Running TLS tests..."
@@ -220,12 +222,12 @@ test-integration:
   # Start databases
   podman run -d --name dbpulse-postgres \
     -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=testdb \
-    -p 5432:5432 postgres:18
+    -p 5432:5432 docker.io/library/postgres:18
 
   podman run -d --name dbpulse-mariadb \
     -e MARIADB_USER=dbpulse -e MARIADB_PASSWORD=secret \
     -e MARIADB_ROOT_PASSWORD=secret -e MARIADB_DATABASE=testdb \
-    -p 3306:3306 mariadb:latest
+    -p 3306:3306 docker.io/library/mariadb:12
 
   echo "⏳ Waiting for databases to be ready..."
 
@@ -276,14 +278,14 @@ test-failover:
     -e POSTGRES_USER=postgres \
     -e POSTGRES_PASSWORD=secret \
     -e POSTGRES_DB=testdb \
-    -p 5432:5432 postgres:18
+    -p 5432:5432 docker.io/library/postgres:18
 
   podman run -d --name dbpulse-mariadb \
     -e MARIADB_USER=dbpulse \
     -e MARIADB_PASSWORD=secret \
     -e MARIADB_ROOT_PASSWORD=secret \
     -e MARIADB_DATABASE=testdb \
-    -p 3306:3306 mariadb:latest
+    -p 3306:3306 docker.io/library/mariadb:12
 
   echo "⏳ Waiting for databases..."
   for i in {1..30}; do
@@ -329,21 +331,27 @@ test-tls:
 
   echo "🔐 Setting up TLS testing environment..."
 
+  # Every container this recipe can leave behind, matching-SAN and
+  # mismatched-SAN alike, so each failure path cleans up all of them.
+  TLS_CONTAINERS="dbpulse-postgres-tls dbpulse-mariadb-tls dbpulse-postgres-tls-mismatch dbpulse-mariadb-tls-mismatch"
+
   # Clean up any existing containers first
-  podman rm -f dbpulse-postgres dbpulse-mariadb dbpulse-postgres-tls dbpulse-mariadb-tls 2>/dev/null || true
+  podman rm -f dbpulse-postgres dbpulse-mariadb $TLS_CONTAINERS 2>/dev/null || true
 
   ./scripts/gen-certs.sh > /dev/null 2>&1
-  chmod 644 .certs/mariadb/server.key
+  chmod 644 .certs/mariadb/server.key .certs/mariadb/server-othername.key
 
   # Build PostgreSQL image with proper key permissions
   cat > Dockerfile.postgres-tls <<'EOF'
-  FROM postgres:18-alpine
+  FROM docker.io/library/postgres:18-alpine
   COPY .certs/postgres/server.crt /var/lib/postgresql/server.crt
   COPY .certs/postgres/server.key /var/lib/postgresql/server.key
+  COPY .certs/postgres/server-othername.crt /var/lib/postgresql/server-othername.crt
+  COPY .certs/postgres/server-othername.key /var/lib/postgresql/server-othername.key
   COPY .certs/postgres/ca.crt /var/lib/postgresql/ca.crt
-  RUN chown postgres:postgres /var/lib/postgresql/server.* /var/lib/postgresql/ca.crt && \
-      chmod 600 /var/lib/postgresql/server.key && \
-      chmod 644 /var/lib/postgresql/server.crt /var/lib/postgresql/ca.crt
+  RUN chown postgres:postgres /var/lib/postgresql/server.* /var/lib/postgresql/server-othername.* /var/lib/postgresql/ca.crt && \
+      chmod 600 /var/lib/postgresql/server.key /var/lib/postgresql/server-othername.key && \
+      chmod 644 /var/lib/postgresql/server.crt /var/lib/postgresql/server-othername.crt /var/lib/postgresql/ca.crt
   EOF
 
   echo "🚀 Starting TLS-enabled databases..."
@@ -367,10 +375,41 @@ test-tls:
     -e MARIADB_ROOT_PASSWORD=secret \
     -e MARIADB_DATABASE=testdb \
     -p 3306:3306 \
-    -v $(pwd)/.certs/mariadb/server.crt:/etc/mysql/ssl/server.crt:ro \
-    -v $(pwd)/.certs/mariadb/server.key:/etc/mysql/ssl/server.key:ro \
-    -v $(pwd)/.certs/mariadb/ca.crt:/etc/mysql/ssl/ca.crt:ro \
-    mariadb:11 \
+    -v $(pwd)/.certs/mariadb/server.crt:/etc/mysql/ssl/server.crt:ro,z \
+    -v $(pwd)/.certs/mariadb/server.key:/etc/mysql/ssl/server.key:ro,z \
+    -v $(pwd)/.certs/mariadb/ca.crt:/etc/mysql/ssl/ca.crt:ro,z \
+    docker.io/library/mariadb:12 \
+    --ssl-cert=/etc/mysql/ssl/server.crt \
+    --ssl-key=/etc/mysql/ssl/server.key \
+    --ssl-ca=/etc/mysql/ssl/ca.crt \
+    --require-secure-transport=OFF \
+    --tls-version=TLSv1.2,TLSv1.3
+
+  # Same servers, but presenting a CA-signed certificate whose SAN does not
+  # cover "localhost". Only the hostname check fails, which is the single
+  # difference between verify-ca and verify-full.
+  podman run -d --name dbpulse-postgres-tls-mismatch \
+    -e POSTGRES_USER=postgres \
+    -e POSTGRES_PASSWORD=secret \
+    -e POSTGRES_DB=testdb \
+    -p 5433:5432 \
+    postgres-tls:test \
+    -c ssl=on \
+    -c ssl_cert_file=/var/lib/postgresql/server-othername.crt \
+    -c ssl_key_file=/var/lib/postgresql/server-othername.key \
+    -c ssl_ca_file=/var/lib/postgresql/ca.crt \
+    -c ssl_min_protocol_version=TLSv1.2
+
+  podman run -d --name dbpulse-mariadb-tls-mismatch \
+    -e MARIADB_USER=dbpulse \
+    -e MARIADB_PASSWORD=secret \
+    -e MARIADB_ROOT_PASSWORD=secret \
+    -e MARIADB_DATABASE=testdb \
+    -p 3307:3306 \
+    -v $(pwd)/.certs/mariadb/server-othername.crt:/etc/mysql/ssl/server.crt:ro,z \
+    -v $(pwd)/.certs/mariadb/server-othername.key:/etc/mysql/ssl/server.key:ro,z \
+    -v $(pwd)/.certs/mariadb/ca.crt:/etc/mysql/ssl/ca.crt:ro,z \
+    docker.io/library/mariadb:12 \
     --ssl-cert=/etc/mysql/ssl/server.crt \
     --ssl-key=/etc/mysql/ssl/server.key \
     --ssl-ca=/etc/mysql/ssl/ca.crt \
@@ -379,52 +418,57 @@ test-tls:
 
   echo "⏳ Waiting for databases to be ready..."
 
-  # Wait for PostgreSQL
-  for i in {1..30}; do
-    if podman exec dbpulse-postgres-tls pg_isready -U postgres > /dev/null 2>&1; then
-      echo "✓ PostgreSQL ready"
-      break
-    fi
-    if [ $i -eq 30 ]; then
-      echo "❌ PostgreSQL failed to start"
-      podman logs dbpulse-postgres-tls
-      podman rm -f dbpulse-postgres-tls dbpulse-mariadb-tls > /dev/null 2>&1
-      exit 1
-    fi
-    sleep 1
-  done
+  tls_teardown() {
+    podman rm -f $TLS_CONTAINERS > /dev/null 2>&1
+    rm -f Dockerfile.postgres-tls
+  }
 
-  # Wait for MariaDB
-  for i in {1..30}; do
-    if podman exec dbpulse-mariadb-tls mariadb -u dbpulse -psecret -D testdb -e "SELECT 1" > /dev/null 2>&1; then
-      echo "✓ MariaDB ready"
-      break
-    fi
-    if [ $i -eq 30 ]; then
-      echo "❌ MariaDB failed to start"
-      podman logs dbpulse-mariadb-tls
-      podman rm -f dbpulse-postgres-tls dbpulse-mariadb-tls > /dev/null 2>&1
-      exit 1
-    fi
-    sleep 1
-  done
+  wait_for_postgres() {
+    for i in {1..30}; do
+      if podman exec "$1" pg_isready -U postgres > /dev/null 2>&1; then
+        echo "✓ PostgreSQL ready ($1)"
+        return 0
+      fi
+      sleep 1
+    done
+    echo "❌ PostgreSQL failed to start ($1)"
+    podman logs "$1"
+    tls_teardown
+    exit 1
+  }
+
+  wait_for_mariadb() {
+    for i in {1..30}; do
+      if podman exec "$1" mariadb -u dbpulse -psecret -D testdb -e "SELECT 1" > /dev/null 2>&1; then
+        echo "✓ MariaDB ready ($1)"
+        return 0
+      fi
+      sleep 1
+    done
+    echo "❌ MariaDB failed to start ($1)"
+    podman logs "$1"
+    tls_teardown
+    exit 1
+  }
+
+  wait_for_postgres dbpulse-postgres-tls
+  wait_for_postgres dbpulse-postgres-tls-mismatch
+  wait_for_mariadb dbpulse-mariadb-tls
+  wait_for_mariadb dbpulse-mariadb-tls-mismatch
 
   echo "🧪 Running TLS integration tests..."
   if ! cargo test --test postgres_tls_test -- --ignored --nocapture; then
     echo "❌ PostgreSQL TLS tests failed"
-    podman rm -f dbpulse-postgres-tls dbpulse-mariadb-tls > /dev/null 2>&1
-    rm -f Dockerfile.postgres-tls
+    tls_teardown
     exit 1
   fi
 
   if ! cargo test --test mariadb_tls_test -- --ignored --nocapture; then
     echo "❌ MariaDB TLS tests failed"
-    podman rm -f dbpulse-postgres-tls dbpulse-mariadb-tls > /dev/null 2>&1
-    rm -f Dockerfile.postgres-tls
+    tls_teardown
     exit 1
   fi
 
   echo "🧹 Cleaning up..."
-  podman rm -f dbpulse-postgres-tls dbpulse-mariadb-tls > /dev/null 2>&1
-  rm -f Dockerfile.postgres-tls
+  tls_teardown
   echo "✅ All TLS tests passed!"

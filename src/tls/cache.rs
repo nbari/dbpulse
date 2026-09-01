@@ -11,7 +11,11 @@ use std::{
 };
 use tokio::sync::RwLock;
 
-/// Certificate metadata cache with TTL
+/// Certificate metadata cache with TTL.
+///
+/// Keyed by `host:port`, and dbpulse monitors a single DSN, so this holds one
+/// entry in practice. Expiry is enforced on read: a stale entry is reported as
+/// a miss and overwritten by the next probe.
 pub struct CertCache {
     data: Arc<RwLock<HashMap<String, (TlsMetadata, Instant)>>>,
     ttl: Duration,
@@ -44,12 +48,21 @@ impl CertCache {
         let mut cache = self.data.write().await;
         cache.insert(key, (metadata, Instant::now()));
     }
+}
 
-    /// Clear expired entries from cache
-    pub async fn cleanup(&self) {
-        let mut cache = self.data.write().await;
-        cache.retain(|_, (_, timestamp)| timestamp.elapsed() < self.ttl);
-    }
+/// Identify the probed endpoint for the cache.
+///
+/// The port comes from the DSN when it sets one, falling back to the driver's
+/// default only when it does not. Keying unconditionally on the default port
+/// caches a probe of `host:3307` as `host:3306`: harmless while dbpulse
+/// monitors a single DSN, but wrong for any caller holding two DSNs on the
+/// same host, which would read back the other endpoint's certificate.
+fn cache_key(dsn: &DSN, default_port: u16) -> String {
+    format!(
+        "{}:{}",
+        dsn.host.as_deref().unwrap_or(""),
+        dsn.port.unwrap_or(default_port)
+    )
 }
 
 /// Get certificate metadata with caching
@@ -69,7 +82,7 @@ pub async fn get_cert_metadata_cached(
     tls: &TlsConfig,
     cache: &CertCache,
 ) -> Result<Option<TlsMetadata>> {
-    let cache_key = format!("{}:{}", dsn.host.as_deref().unwrap_or(""), default_port);
+    let cache_key = cache_key(dsn, default_port);
 
     // Try cache first
     if let Some(cached) = cache.get(&cache_key).await {
@@ -158,32 +171,6 @@ mod tests {
         assert!(retrieved2.is_some());
         assert_eq!(retrieved1.unwrap().cert_subject, metadata1.cert_subject);
         assert_eq!(retrieved2.unwrap().cert_subject, metadata2.cert_subject);
-    }
-
-    #[tokio::test]
-    async fn test_cache_cleanup() {
-        let cache = CertCache::new(Duration::from_millis(100));
-
-        let metadata = TlsMetadata {
-            cert_subject: Some("CN=test".to_string()),
-            ..Default::default()
-        };
-
-        cache.set("test1".to_string(), metadata.clone()).await;
-        cache.set("test2".to_string(), metadata.clone()).await;
-
-        // Wait for expiry
-        tokio::time::sleep(Duration::from_millis(150)).await;
-
-        // Add a fresh entry
-        cache.set("test3".to_string(), metadata).await;
-
-        // Cleanup should remove expired entries
-        cache.cleanup().await;
-
-        assert!(cache.get("test1").await.is_none());
-        assert!(cache.get("test2").await.is_none());
-        assert!(cache.get("test3").await.is_some());
     }
 
     #[tokio::test]
@@ -277,5 +264,27 @@ mod tests {
         assert_eq!(retrieved.cert_subject, metadata.cert_subject);
         assert_eq!(retrieved.cert_issuer, metadata.cert_issuer);
         assert_eq!(retrieved.cert_expiry_days, metadata.cert_expiry_days);
+    }
+
+    /// Regression: the key must name the endpoint actually probed. The probe
+    /// connects to `dsn.port` when set, but the key used the driver's default
+    /// port unconditionally, so `host:3307` was cached as `host:3306`.
+    #[test]
+    fn cache_key_uses_the_dsn_port_when_set() {
+        let dsn = dsn::parse("mysql://u:p@tcp(db.example.com:3307)/db").unwrap();
+        assert_eq!(cache_key(&dsn, 3306), "db.example.com:3307");
+    }
+
+    #[test]
+    fn cache_key_falls_back_to_the_default_port() {
+        let dsn = dsn::parse("mysql://u:p@tcp(db.example.com)/db").unwrap();
+        assert_eq!(cache_key(&dsn, 3306), "db.example.com:3306");
+    }
+
+    #[test]
+    fn cache_key_distinguishes_ports_on_the_same_host() {
+        let a = dsn::parse("postgres://u:p@tcp(db.example.com:5432)/db").unwrap();
+        let b = dsn::parse("postgres://u:p@tcp(db.example.com:5433)/db").unwrap();
+        assert_ne!(cache_key(&a, 5432), cache_key(&b, 5432));
     }
 }

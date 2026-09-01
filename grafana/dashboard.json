@@ -326,7 +326,7 @@
           },
           "instant": true,
           "expr": "dbpulse_database_version_info{job=\"$job\", instance=\"$instance\"}",
-          "legendFormat": "{{database}} • {{version}}",
+          "legendFormat": "{{database}} \u2022 {{version}}",
           "refId": "A"
         }
       ],
@@ -554,7 +554,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Number of queries currently blocking others. Should normally be 0.",
+      "description": "Number of sessions currently waiting on a lock. Should normally be 0.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -613,12 +613,12 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "dbpulse_blocking_queries{job=\"$job\", instance=\"$instance\"}",
+          "expr": "dbpulse_blocked_sessions{job=\"$job\", instance=\"$instance\"}",
           "legendFormat": "{{database}}",
           "refId": "A"
         }
       ],
-      "title": "Blocking Queries",
+      "title": "Blocked Sessions",
       "type": "stat"
     },
     {
@@ -1441,7 +1441,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(dbpulse_replication_lag_seconds_sum{job=\"$job\", instance=\"$instance\"}[5m]) / rate(dbpulse_replication_lag_seconds_count{job=\"$job\", instance=\"$instance\"}[5m])",
+          "expr": "dbpulse_replication_lag_seconds{job=\"$job\", instance=\"$instance\"}",
           "legendFormat": "{{database}} - Average",
           "refId": "A"
         },
@@ -1450,7 +1450,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.99, rate(dbpulse_replication_lag_seconds_bucket{job=\"$job\", instance=\"$instance\"}[5m]))",
+          "expr": "max(dbpulse_replication_lag_seconds{job=\"$job\", instance=\"$instance\"})",
           "legendFormat": "{{database}} - P99",
           "refId": "B"
         }

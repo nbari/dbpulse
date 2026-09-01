@@ -13,7 +13,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
@@ -25,7 +25,7 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Clippy
@@ -35,7 +35,7 @@ jobs:
     name: Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Check
@@ -56,7 +56,7 @@ jobs:
       - lint
       - check
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       - name: test
@@ -101,7 +101,7 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install database clients
@@ -150,7 +150,7 @@ jobs:
       - check
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install database clients
@@ -254,7 +254,7 @@ jobs:
       - check
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
@@ -265,8 +265,8 @@ jobs:
       - name: Generate TLS certificates
         run: |
           ./scripts/gen-certs.sh
-          # Make MariaDB key readable
-          chmod 644 .certs/mariadb/server.key
+          # Make MariaDB keys readable
+          chmod 644 .certs/mariadb/server.key .certs/mariadb/server-othername.key
 
       - name: Prepare PostgreSQL with TLS
         run: |
@@ -275,10 +275,12 @@ jobs:
           FROM postgres:18-alpine
           COPY .certs/postgres/server.crt /var/lib/postgresql/server.crt
           COPY .certs/postgres/server.key /var/lib/postgresql/server.key
+          COPY .certs/postgres/server-othername.crt /var/lib/postgresql/server-othername.crt
+          COPY .certs/postgres/server-othername.key /var/lib/postgresql/server-othername.key
           COPY .certs/postgres/ca.crt /var/lib/postgresql/ca.crt
-          RUN chown postgres:postgres /var/lib/postgresql/server.* /var/lib/postgresql/ca.crt && \
-              chmod 600 /var/lib/postgresql/server.key && \
-              chmod 644 /var/lib/postgresql/server.crt /var/lib/postgresql/ca.crt
+          RUN chown postgres:postgres /var/lib/postgresql/server.* /var/lib/postgresql/server-othername.* /var/lib/postgresql/ca.crt && \
+              chmod 600 /var/lib/postgresql/server.key /var/lib/postgresql/server-othername.key && \
+              chmod 644 /var/lib/postgresql/server.crt /var/lib/postgresql/server-othername.crt /var/lib/postgresql/ca.crt
           EOF
           docker build -t postgres-tls:test -f Dockerfile.postgres-tls .
 
@@ -348,6 +350,59 @@ jobs:
           docker exec mariadb-tls mariadb -h 127.0.0.1 -u dbpulse -psecret -D testdb --ssl \
             -e "SHOW STATUS LIKE 'Ssl_cipher';"
 
+      - name: Start hostname-mismatch servers with TLS
+        run: |
+          # Same CA, but a certificate that only names db.invalid. The chain is
+          # valid and only the hostname check fails, which is the single
+          # difference between verify-ca and verify-full.
+          docker run -d \
+            --name postgres-tls-mismatch \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=secret \
+            -e POSTGRES_DB=testdb \
+            -p 5433:5432 \
+            postgres-tls:test \
+            -c ssl=on \
+            -c ssl_cert_file=/var/lib/postgresql/server-othername.crt \
+            -c ssl_key_file=/var/lib/postgresql/server-othername.key \
+            -c ssl_ca_file=/var/lib/postgresql/ca.crt \
+            -c ssl_min_protocol_version=TLSv1.2
+
+          docker run -d \
+            --name mariadb-tls-mismatch \
+            -e MARIADB_USER=dbpulse \
+            -e MARIADB_PASSWORD=secret \
+            -e MARIADB_ROOT_PASSWORD=secret \
+            -e MARIADB_DATABASE=testdb \
+            -p 3307:3306 \
+            -v $PWD/.certs/mariadb/server-othername.crt:/etc/mysql/ssl/server.crt:ro \
+            -v $PWD/.certs/mariadb/server-othername.key:/etc/mysql/ssl/server.key:ro \
+            -v $PWD/.certs/mariadb/ca.crt:/etc/mysql/ssl/ca.crt:ro \
+            mariadb:12 \
+            --ssl-cert=/etc/mysql/ssl/server.crt \
+            --ssl-key=/etc/mysql/ssl/server.key \
+            --ssl-ca=/etc/mysql/ssl/ca.crt \
+            --require-secure-transport=OFF \
+            --tls-version=TLSv1.2,TLSv1.3
+
+          for i in {1..30}; do
+            if docker exec postgres-tls-mismatch pg_isready -U postgres 2>/dev/null; then
+              echo "PostgreSQL (mismatch) is ready!"
+              break
+            fi
+            echo "Waiting for PostgreSQL (mismatch)... ($i/30)"
+            sleep 2
+          done
+
+          for i in {1..30}; do
+            if docker exec mariadb-tls-mismatch mariadb -u dbpulse -psecret -D testdb -e "SELECT 1" &>/dev/null; then
+              echo "MariaDB (mismatch) is ready!"
+              break
+            fi
+            echo "Waiting for MariaDB (mismatch)... ($i/30)"
+            sleep 2
+          done
+
       - name: Run PostgreSQL TLS tests
         run: cargo test --test postgres_tls_test -- --ignored --nocapture
         env:
@@ -368,9 +423,15 @@ jobs:
           echo ""
           echo "==> MariaDB logs:"
           docker logs mariadb-tls || true
+          echo ""
+          echo "==> PostgreSQL (mismatch) logs:"
+          docker logs postgres-tls-mismatch || true
+          echo ""
+          echo "==> MariaDB (mismatch) logs:"
+          docker logs mariadb-tls-mismatch || true
 
       - name: Cleanup
         if: always()
         run: |-
-          docker stop postgres-tls mariadb-tls || true
-          docker rm postgres-tls mariadb-tls || true
+          docker stop postgres-tls mariadb-tls postgres-tls-mismatch mariadb-tls-mismatch || true
+          docker rm postgres-tls mariadb-tls postgres-tls-mismatch mariadb-tls-mismatch || true

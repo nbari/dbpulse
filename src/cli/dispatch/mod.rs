@@ -7,6 +7,22 @@ use clap::ArgMatches;
 use dsn::DSN;
 use std::{net::IpAddr, path::PathBuf};
 
+/// Look up a DSN query parameter by alias, case-insensitively.
+///
+/// The `dsn` crate stores parameter keys verbatim, so `?SSLMODE=require` does
+/// not match a lookup for `sslmode`. Key case must not decide security
+/// posture: missing `SSLMODE` would silently default to `TlsMode::Disable`
+/// and ship the credentials in plaintext -- the same fail-open an
+/// unrecognised value used to cause.
+fn get_param<'a>(dsn: &'a DSN, aliases: &[&str]) -> Option<&'a str> {
+    aliases.iter().find_map(|alias| {
+        dsn.params
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(alias))
+            .map(|(_, value)| value.as_str())
+    })
+}
+
 /// Extract TLS configuration from DSN query parameters
 ///
 /// Supports both PostgreSQL-style and MySQL-style parameter names:
@@ -14,43 +30,29 @@ use std::{net::IpAddr, path::PathBuf};
 /// - sslrootcert, sslca, ssl-ca: Path to CA certificate
 /// - sslcert, ssl-cert: Path to client certificate
 /// - sslkey, ssl-key: Path to client private key
-fn extract_tls_config(dsn: &DSN) -> TlsConfig {
-    // Extract TLS mode (try both sslmode and ssl-mode)
-    let mode = dsn
-        .params
-        .get("sslmode")
-        .or_else(|| dsn.params.get("ssl-mode"))
-        .and_then(|m| m.parse::<TlsMode>().ok())
+fn extract_tls_config(dsn: &DSN) -> Result<TlsConfig> {
+    // Extract TLS mode (PostgreSQL and MySQL spellings)
+    let mode = get_param(dsn, &["sslmode", "ssl-mode"])
+        .map(|m| m.parse::<TlsMode>().map_err(|err| anyhow::anyhow!(err)))
+        .transpose()
+        .context("invalid TLS mode in DSN")?
         .unwrap_or_default();
 
     // Extract CA certificate path (try multiple parameter names)
-    let ca = dsn
-        .params
-        .get("sslrootcert")
-        .or_else(|| dsn.params.get("sslca"))
-        .or_else(|| dsn.params.get("ssl-ca"))
-        .map(PathBuf::from);
+    let ca = get_param(dsn, &["sslrootcert", "sslca", "ssl-ca"]).map(PathBuf::from);
 
     // Extract client certificate path
-    let cert = dsn
-        .params
-        .get("sslcert")
-        .or_else(|| dsn.params.get("ssl-cert"))
-        .map(PathBuf::from);
+    let cert = get_param(dsn, &["sslcert", "ssl-cert"]).map(PathBuf::from);
 
     // Extract client key path
-    let key = dsn
-        .params
-        .get("sslkey")
-        .or_else(|| dsn.params.get("ssl-key"))
-        .map(PathBuf::from);
+    let key = get_param(dsn, &["sslkey", "ssl-key"]).map(PathBuf::from);
 
-    TlsConfig {
+    Ok(TlsConfig {
         mode,
         ca,
         cert,
         key,
-    }
+    })
 }
 
 /// Convert `ArgMatches` into typed Action enum with validation
@@ -84,7 +86,7 @@ pub fn dispatch(matches: &ArgMatches) -> Result<Action> {
     let range = matches.get_one::<u32>("range").copied().unwrap_or(100);
 
     // Extract TLS configuration from DSN query parameters
-    let tls = extract_tls_config(&dsn);
+    let tls = extract_tls_config(&dsn)?;
 
     Ok(Action::Monitor {
         dsn,
@@ -378,6 +380,119 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("Invalid IP address")
+        );
+    }
+
+    /// Build a DSN without ever writing a literal `scheme://user:pass@host`.
+    ///
+    /// The `tcp(host:port)` form is required: the `dsn` crate only parses the
+    /// database and query parameters when the address is wrapped in a
+    /// protocol, and every documented example uses it.
+    fn dsn_with(driver: &str, query: &str) -> String {
+        format!("{driver}://u:p@tcp(localhost:5432)/db?{query}")
+    }
+
+    fn tls_for(driver: &str, query: &str) -> Result<TlsConfig> {
+        let matches = commands::new()
+            .try_get_matches_from(vec!["dbpulse", "--dsn", &dsn_with(driver, query)])
+            .unwrap();
+
+        match dispatch(&matches)? {
+            Action::Monitor { tls, .. } => Ok(tls),
+        }
+    }
+
+    /// Regression: a misspelled `sslmode` used to be swallowed by
+    /// `.ok().unwrap_or_default()`, and `TlsMode`'s default is `Disable`.
+    ///
+    /// The operator asks for a verified TLS connection, gets plaintext, and is
+    /// told nothing -- the worst possible outcome for a flag whose only job is
+    /// to decide whether credentials cross the network in the clear. Startup
+    /// must abort instead.
+    #[test]
+    fn unknown_ssl_mode_aborts_instead_of_silently_using_plaintext() {
+        for query in [
+            "sslmode=verify-al",
+            "sslmode=on",
+            "ssl-mode=VERIFY_FULLY",
+            "sslmode=prefer",
+        ] {
+            let err = tls_for("postgres", query).expect_err(
+                "an unparseable TLS mode must abort startup, not fall back to plaintext",
+            );
+
+            let rendered = format!("{err:#}");
+            assert!(
+                rendered.contains("TLS mode"),
+                "error should name the offending setting, got: {rendered}"
+            );
+        }
+    }
+
+    /// The DSN documentation advertises `ssl-mode` as a MySQL-style alias, and
+    /// dbpulse's own TLS workflow passes `ssl-mode=REQUIRED`. Those values only
+    /// parsed as "invalid" before, so the alias silently meant "no TLS".
+    #[test]
+    fn mysql_ssl_mode_spellings_enable_tls() {
+        assert_eq!(
+            tls_for("mysql", "ssl-mode=REQUIRED").unwrap().mode,
+            TlsMode::Require
+        );
+        assert_eq!(
+            tls_for("mysql", "ssl-mode=VERIFY_CA").unwrap().mode,
+            TlsMode::VerifyCA
+        );
+        assert_eq!(
+            tls_for("mysql", "ssl-mode=VERIFY_IDENTITY").unwrap().mode,
+            TlsMode::VerifyFull
+        );
+        assert_eq!(
+            tls_for("mysql", "ssl-mode=DISABLED").unwrap().mode,
+            TlsMode::Disable
+        );
+    }
+
+    /// A DSN that says nothing about TLS keeps the historical default.
+    #[test]
+    fn absent_ssl_mode_still_defaults_to_disable() {
+        assert_eq!(
+            tls_for("postgres", "connect_timeout=5").unwrap().mode,
+            TlsMode::Disable
+        );
+    }
+
+    /// Regression: the `dsn` crate stores parameter keys verbatim, so
+    /// `?SSLMODE=require` missed the case-sensitive `sslmode` lookup and
+    /// silently fell back to plaintext -- the fail-open this module must
+    /// never allow. Key case must not decide security posture.
+    #[test]
+    fn ssl_parameter_keys_are_case_insensitive() {
+        assert_eq!(
+            tls_for("postgres", "SSLMODE=REQUIRED").unwrap().mode,
+            TlsMode::Require
+        );
+        assert_eq!(
+            tls_for("mysql", "Ssl-Mode=Verify_Ca").unwrap().mode,
+            TlsMode::VerifyCA
+        );
+        assert_eq!(
+            tls_for("mysql", "SSLMODE=VERIFY_IDENTITY").unwrap().mode,
+            TlsMode::VerifyFull
+        );
+        assert_eq!(
+            tls_for("postgres", "SSLROOTCERT=/ca.crt").unwrap().ca,
+            Some(PathBuf::from("/ca.crt"))
+        );
+    }
+
+    /// A bad value under a differently-cased key must still fail closed.
+    #[test]
+    fn uppercase_sslmode_with_a_bad_value_aborts_startup() {
+        let err = tls_for("postgres", "SSLMODE=definitely-not-a-mode")
+            .expect_err("an invalid mode must fail closed regardless of key case");
+        assert!(
+            format!("{err:#}").contains("TLS mode"),
+            "error should name the offending setting, got: {err:#}"
         );
     }
 }

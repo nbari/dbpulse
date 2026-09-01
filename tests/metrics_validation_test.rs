@@ -20,7 +20,7 @@ const EXPECTED_METRICS: &[&str] = &[
     "dbpulse_table_size_bytes",
     "dbpulse_table_rows",
     "dbpulse_database_size_bytes",
-    "dbpulse_blocking_queries",
+    "dbpulse_blocked_sessions",
 ];
 
 /// Extract all metric names from the encoded Prometheus output
