@@ -7,6 +7,11 @@ on:
       CODECOV_TOKEN:
         required: true
 
+# Called workflows cannot exceed the caller's grant, but state it explicitly so
+# adding a trigger here later cannot silently widen the token.
+permissions:
+  contents: read
+
 jobs:
   coverage:
     name: Coverage

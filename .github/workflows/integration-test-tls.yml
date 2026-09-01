@@ -14,6 +14,11 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Runs directly on pull_request, so the token's scope is this workflow's own.
+# Checking out the code is all these jobs do.
+permissions:
+  contents: read
+
 jobs:
   integration-test-tls:
     name: TLS Integration Tests
