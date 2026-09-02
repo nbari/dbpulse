@@ -96,7 +96,9 @@ pub async fn start(
     };
 
     println!(
-        "{} - Listening on {}, interval: {}",
+        "{} {} - {} - Listening on {}, interval: {}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
         Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
         bind_addr,
         interval

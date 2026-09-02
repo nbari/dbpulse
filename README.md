@@ -79,6 +79,9 @@ The Data Source Name (DSN) follows this format:
 
 **Supported drivers:** `postgres`, `mysql`
 
+**PostgreSQL compatibility:** PostgreSQL 14 or newer is supported. Automated
+integration tests run against PostgreSQL 18.
+
 #### Basic Examples
 
 ```sh

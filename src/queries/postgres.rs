@@ -63,12 +63,16 @@ pub async fn test_rw_with_table(
 
     let health_info = fetch_postgres_health_info(&mut conn).await?;
 
-    // Recorded on every check rather than only while in recovery: a gauge that
-    // stops being written keeps its last value, so a replica promoted to
-    // primary would otherwise report its final pre-promotion lag forever.
-    maybe_record_postgres_replication_lag(&mut conn).await;
+    // Fetch recovery state and lag together. These used to be two consecutive
+    // queries even though the lag expression already called
+    // `pg_is_in_recovery()`, adding a full network round trip to every check.
+    // Keeping the primary's `NULL` lag result is important: it retires the
+    // previous gauge when a standby is promoted instead of freezing it at its
+    // last pre-promotion value.
+    let replication_state = fetch_postgres_replication_state(&mut conn).await?;
+    record_replication_lag("postgres", replication_state.lag_seconds);
 
-    if postgres_is_in_recovery(&mut conn).await? {
+    if replication_state.in_recovery {
         return postgres_read_only_result(
             dsn,
             tls,
@@ -305,13 +309,6 @@ async fn fetch_postgres_health_info(conn: &mut sqlx::PgConnection) -> Result<Pos
     })
 }
 
-async fn postgres_is_in_recovery(conn: &mut sqlx::PgConnection) -> Result<bool> {
-    let (is_in_recovery,): (bool,) = sqlx::query_as("SELECT pg_is_in_recovery();")
-        .fetch_one(&mut *conn)
-        .await?;
-    Ok(is_in_recovery)
-}
-
 async fn postgres_transaction_is_read_only(conn: &mut sqlx::PgConnection) -> Result<bool> {
     let (tx_read_only,): (String,) = sqlx::query_as("SHOW transaction_read_only;")
         .fetch_one(&mut *conn)
@@ -319,10 +316,11 @@ async fn postgres_transaction_is_read_only(conn: &mut sqlx::PgConnection) -> Res
     Ok(tx_read_only.eq_ignore_ascii_case("on"))
 }
 
-/// Distance a standby is behind its primary, in whole seconds.
+/// Recovery state and the distance a standby is behind its primary.
 ///
-/// `NULL` on a primary, and on a standby that has never streamed. Exposed so
-/// the regression test can substitute the volatile calls and assert the whole
+/// Returns `(in_recovery, lag_seconds)` in one row and one round trip. Lag is
+/// `NULL` on a primary and on a standby that has never streamed. Exposed so the
+/// regression test can substitute the volatile calls and assert the whole
 /// truth table against a live server rather than a copy that can drift.
 ///
 /// The walreceiver guard keys off **row existence**, not `status`. Verified
@@ -340,21 +338,37 @@ async fn postgres_transaction_is_read_only(conn: &mut sqlx::PgConnection) -> Res
 /// worse failure than the one being fixed. Accepting a visible row with a
 /// `NULL` status keeps that case correct while still catching a receiver the
 /// server reports as stopped.
-pub const REPLICATION_LAG_SQL: &str = "SELECT CASE
-             WHEN NOT pg_is_in_recovery() THEN NULL
-             WHEN pg_last_wal_receive_lsn() IS NULL AND pg_last_wal_replay_lsn() IS NULL THEN NULL
-             WHEN pg_last_wal_receive_lsn() IS NOT DISTINCT FROM pg_last_wal_replay_lsn()
+pub const REPLICATION_LAG_SQL: &str = "WITH replication_state AS MATERIALIZED (
+             SELECT pg_is_in_recovery() AS in_recovery,
+                    pg_last_wal_receive_lsn() AS receive_lsn,
+                    pg_last_wal_replay_lsn() AS replay_lsn,
+                    pg_last_xact_replay_timestamp() AS replay_timestamp
+         )
+         SELECT in_recovery,
+                CASE
+             WHEN NOT in_recovery THEN NULL
+             WHEN receive_lsn IS NULL AND replay_lsn IS NULL THEN NULL
+             WHEN receive_lsn IS NOT DISTINCT FROM replay_lsn
                   AND EXISTS (
                       SELECT 1 FROM pg_stat_wal_receiver
                       WHERE status IS NULL OR status = 'streaming'
                   ) THEN 0
              ELSE GREATEST(
                  0,
-                 CAST(EXTRACT(EPOCH FROM (NOW() - pg_last_xact_replay_timestamp())) AS BIGINT)
+                 CAST(EXTRACT(EPOCH FROM (NOW() - replay_timestamp)) AS BIGINT)
              )
-         END";
+         END
+         FROM replication_state";
 
-async fn maybe_record_postgres_replication_lag(conn: &mut sqlx::PgConnection) {
+#[derive(Debug, PartialEq, Eq)]
+struct PostgresReplicationState {
+    in_recovery: bool,
+    lag_seconds: Option<i64>,
+}
+
+async fn fetch_postgres_replication_state(
+    conn: &mut sqlx::PgConnection,
+) -> Result<PostgresReplicationState> {
     // Rounded server-side: the gauge is integer seconds, and doing the cast in
     // SQL avoids a lossy float -> int conversion in Rust.
     //
@@ -380,14 +394,15 @@ async fn maybe_record_postgres_replication_lag(conn: &mut sqlx::PgConnection) {
     // without the walreceiver check it reports a lag of exactly 0 forever
     // while serving increasingly stale data -- the one moment the metric has
     // to be believed.
-    let lag = sqlx::query_scalar::<_, Option<i64>>(REPLICATION_LAG_SQL)
-        .fetch_optional(&mut *conn)
+    let (in_recovery, lag_seconds): (bool, Option<i64>) = sqlx::query_as(REPLICATION_LAG_SQL)
+        .fetch_one(&mut *conn)
         .await
-        .ok()
-        .flatten()
-        .flatten();
+        .context("Failed to fetch PostgreSQL recovery state and replication lag")?;
 
-    record_replication_lag("postgres", lag);
+    Ok(PostgresReplicationState {
+        in_recovery,
+        lag_seconds,
+    })
 }
 
 async fn postgres_read_only_result(
@@ -789,4 +804,32 @@ async fn extract_tls_metadata(
     }
 
     Ok(metadata)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::REPLICATION_LAG_SQL;
+
+    /// Recovery detection and lag collection must stay in one SQL statement.
+    ///
+    /// The previous implementation executed the lag query and immediately
+    /// followed it with `SELECT pg_is_in_recovery()`, even though the former
+    /// had already evaluated that function. On a remote database that costs a
+    /// full avoidable round trip on every health check.
+    #[test]
+    fn replication_state_query_combines_recovery_and_lag() {
+        assert_eq!(
+            REPLICATION_LAG_SQL.matches("pg_is_in_recovery()").count(),
+            1,
+            "recovery state should be evaluated once inside the materialized CTE"
+        );
+        assert!(
+            REPLICATION_LAG_SQL.contains("SELECT in_recovery,\n                CASE"),
+            "the single result row must return both recovery state and lag"
+        );
+        assert!(
+            !REPLICATION_LAG_SQL.contains(';'),
+            "the query constant must contain exactly one SQL statement"
+        );
+    }
 }

@@ -1,3 +1,19 @@
+## 0.10.1 (2026-09-02)
+
+### Fixed
+
+* **PostgreSQL Replication Lag Used Two Queries** - Fetch the recovery state and
+  replication lag with one statement instead of calling `pg_is_in_recovery()`
+  again in a second query.
+  - Saves one database round trip during each PostgreSQL health check while
+    preserving the existing replication-lag behavior for primaries, caught-up
+    standbys, disconnected or stopped standbys, and standbys that have never
+    streamed.
+  - Add a unit guard that verifies the statement remains a single query and a
+    live PostgreSQL truth-table test covering the supported replication states.
+  - This optimization is independent of the SQLx connection-time regression;
+    that issue still depends on an upstream SQLx release containing the fix.
+
 ## 0.10.0 (2026-09-01)
 
 ### Breaking Changes

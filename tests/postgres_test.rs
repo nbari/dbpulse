@@ -655,6 +655,7 @@ async fn test_postgres_replication_lag_truth_table() {
     const UNPRIVILEGED: &str = "(VALUES (NULL::text)) AS r(status)";
     const STOPPED: &str = "(VALUES ('stopped'::text)) AS r(status)";
     const NO_RECEIVER: &str = "(SELECT NULL::text AS status WHERE false) AS r";
+    type ExpectedState = (bool, Option<i64>);
 
     if skip_if_no_postgres() {
         return;
@@ -664,46 +665,46 @@ async fn test_postgres_replication_lag_truth_table() {
         .await
         .expect("failed to connect");
 
-    let expectations: &[(&str, String, Option<i64>)] = &[
+    let expectations: &[(&str, String, ExpectedState)] = &[
         (
             "a primary reports no lag at all",
             case(false, LSN, LSN, STREAMING),
-            None,
+            (false, None),
         ),
         (
             "a standby that never streamed reports nothing, not zero",
             case(true, NO_LSN, NO_LSN, NO_RECEIVER),
-            None,
+            (true, None),
         ),
         (
             "streaming and caught up is exactly zero",
             case(true, LSN, LSN, STREAMING),
-            Some(0),
+            (true, Some(0)),
         ),
         (
             "an unprivileged role still sees zero while streaming",
             case(true, LSN, LSN, UNPRIVILEGED),
-            Some(0),
+            (true, Some(0)),
         ),
         (
             "a disconnected standby must not claim zero",
             case(true, LSN, LSN, NO_RECEIVER),
-            Some(90),
+            (true, Some(90)),
         ),
         (
             "a stopped receiver must not claim zero",
             case(true, LSN, LSN, STOPPED),
-            Some(90),
+            (true, Some(90)),
         ),
         (
             "replay behind receive falls back to elapsed time",
             case(true, LSN, OTHER_LSN, STREAMING),
-            Some(90),
+            (true, Some(90)),
         ),
     ];
 
     for (what, sql, want) in expectations {
-        let got: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.clone()))
+        let got: (bool, Option<i64>) = sqlx::query_as(sqlx::AssertSqlSafe(sql.clone()))
             .fetch_one(&mut conn)
             .await
             .unwrap_or_else(|e| panic!("{what}: query failed: {e}\n{sql}"));
