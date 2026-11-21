@@ -1,6 +1,5 @@
 use super::{TlsConfig, TlsMetadata, TlsMode, verifier::CertCapturingVerifier};
 use anyhow::{Context, Result, anyhow};
-use chrono::Utc;
 use dsn::DSN;
 use rustls::{
     ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme,
@@ -15,6 +14,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::Duration,
 };
+use time::OffsetDateTime;
 use tokio::{
     fs,
     io::{AsyncReadExt, AsyncWriteExt},
@@ -452,10 +452,7 @@ fn calculate_expiry_days(cert_der: &[u8]) -> Result<i64> {
     let (_, cert) = X509Certificate::from_der(cert_der)
         .map_err(|e| anyhow!("failed to parse certificate: {e}"))?;
     let raw = cert.validity().not_after.to_datetime();
-    let not_after = chrono::DateTime::<Utc>::from_timestamp(raw.unix_timestamp(), raw.nanosecond())
-        .ok_or_else(|| anyhow!("invalid certificate expiry timestamp"))?;
-    let remaining = not_after - Utc::now();
-    Ok(expiry_days_from_remaining(remaining))
+    Ok(expiry_days_from_remaining(raw - OffsetDateTime::now_utc()))
 }
 
 /// Convert "time left before `not_after`" into the whole days reported by
@@ -467,13 +464,17 @@ fn calculate_expiry_days(cert_der: &[u8]) -> Result<i64> {
 /// "expiring" and `< 0` for "expired", so for the whole first day after expiry
 /// a dead certificate matched neither and nobody was paged. Flooring guarantees
 /// an expired certificate is always `<= -1` while still reporting `0` for "less
-/// than a day left".
+/// than a day left". The sub-second part counts too: a certificate that expired
+/// 500ms ago is already expired.
 ///
 /// Shared by every path that turns a certificate `not_after` into days -- the
 /// probe, the capturing verifier, and the MySQL `Ssl_server_not_after`
 /// fallback -- so the boundary behaviour cannot drift between them again.
-pub(crate) fn expiry_days_from_remaining(remaining: chrono::Duration) -> i64 {
-    remaining.num_seconds().div_euclid(SECONDS_PER_DAY)
+pub(crate) fn expiry_days_from_remaining(remaining: time::Duration) -> i64 {
+    let seconds = remaining.whole_seconds();
+    let negative_fraction_at_boundary =
+        seconds.rem_euclid(SECONDS_PER_DAY) == 0 && remaining.subsec_nanoseconds() < 0;
+    seconds.div_euclid(SECONDS_PER_DAY) - i64::from(negative_fraction_at_boundary)
 }
 
 /// Custom certificate verifier that accepts any certificate without validation.
@@ -632,7 +633,7 @@ mod tests {
     fn test_no_verifier_supported_schemes() {
         let verifier = NoVerifier;
         let schemes = verifier.supported_verify_schemes();
-        assert!(!schemes.is_empty());
+        assert_ne!(schemes, [] as [SignatureScheme; 0]);
         assert!(schemes.contains(&SignatureScheme::RSA_PKCS1_SHA256));
         assert!(schemes.contains(&SignatureScheme::ED25519));
     }
@@ -658,12 +659,13 @@ mod tests {
     #[test]
     fn a_just_expired_certificate_reports_a_negative_day_count() {
         for hours_ago in [1, 6, 23] {
-            let days = expiry_days_from_remaining(chrono::Duration::hours(-hours_ago));
+            let days = expiry_days_from_remaining(time::Duration::hours(-hours_ago));
             assert!(
                 days < 0,
                 "expired {hours_ago}h ago should be negative, got {days}"
             );
         }
+        assert!(expiry_days_from_remaining(time::Duration::milliseconds(-500)) < 0);
     }
 
     /// The other half of the same boundary: still valid, however briefly, must
@@ -671,7 +673,7 @@ mod tests {
     #[test]
     fn a_certificate_with_less_than_a_day_left_reports_zero() {
         for hours_left in [1, 6, 23] {
-            let days = expiry_days_from_remaining(chrono::Duration::hours(hours_left));
+            let days = expiry_days_from_remaining(time::Duration::hours(hours_left));
             assert_eq!(days, 0, "{hours_left}h left should floor to 0, got {days}");
         }
     }
@@ -733,9 +735,9 @@ mod tests {
 
     #[test]
     fn whole_day_counts_are_unchanged() {
-        assert_eq!(expiry_days_from_remaining(chrono::Duration::days(30)), 30);
-        assert_eq!(expiry_days_from_remaining(chrono::Duration::days(1)), 1);
-        assert_eq!(expiry_days_from_remaining(chrono::Duration::zero()), 0);
-        assert_eq!(expiry_days_from_remaining(chrono::Duration::days(-1)), -1);
+        assert_eq!(expiry_days_from_remaining(time::Duration::days(30)), 30);
+        assert_eq!(expiry_days_from_remaining(time::Duration::days(1)), 1);
+        assert_eq!(expiry_days_from_remaining(time::Duration::ZERO), 0);
+        assert_eq!(expiry_days_from_remaining(time::Duration::days(-1)), -1);
     }
 }

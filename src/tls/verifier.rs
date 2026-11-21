@@ -1,6 +1,5 @@
 use super::TlsMetadata;
 use anyhow::{Result, anyhow};
-use chrono::Utc;
 use rustls::{
     CertificateError, DigitallySignedStruct, Error as TlsError, RootCertStore, SignatureScheme,
     client::{
@@ -13,6 +12,7 @@ use std::{
     fmt,
     sync::{Arc, Mutex},
 };
+use time::OffsetDateTime;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 /// Certificate metadata captured during TLS handshake
@@ -132,11 +132,8 @@ impl CertCapturingVerifier {
         let issuer = Some(cert.issuer().to_string());
 
         // Calculate expiry days
-        let raw = cert.validity().not_after.to_datetime();
-        let not_after =
-            chrono::DateTime::<Utc>::from_timestamp(raw.unix_timestamp(), raw.nanosecond())
-                .ok_or_else(|| anyhow!("invalid certificate expiry timestamp"))?;
-        let remaining = not_after - Utc::now();
+        let not_after = cert.validity().not_after.to_datetime();
+        let remaining = not_after - OffsetDateTime::now_utc();
         // Floored via the shared probe helper: `Duration::num_days` truncates
         // toward zero, so anything in the first 24h after expiry reported `0`,
         // which matches neither documented alert (`< 30 and > 0`, `< 0`).

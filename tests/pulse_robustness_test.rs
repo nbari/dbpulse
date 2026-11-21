@@ -238,9 +238,8 @@ async fn test_concurrent_panic_and_success() {
                 if i % 2 == 0 {
                     panic_clone.fetch_add(1, Ordering::SeqCst);
                     panic!("Even iteration panic");
-                } else {
-                    success_clone.fetch_add(1, Ordering::SeqCst);
                 }
+                success_clone.fetch_add(1, Ordering::SeqCst);
             })
             .catch_unwind()
             .await;

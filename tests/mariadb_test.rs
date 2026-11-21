@@ -2,7 +2,6 @@
 
 mod common;
 
-use chrono::Utc;
 use common::*;
 use dbpulse::queries::mysql;
 use dbpulse::tls::cache::CertCache;
@@ -15,6 +14,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Instant;
+use time::OffsetDateTime;
 use tokio::time::Duration;
 
 struct ChildGuard(Child);
@@ -53,7 +53,7 @@ async fn test_mariadb_read_write_operations() {
     }
 
     let dsn = parse_dsn(MARIADB_DSN);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig::default();
     let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 
@@ -75,7 +75,7 @@ async fn test_mariadb_transaction_rollback() {
     }
 
     let dsn = parse_dsn(MARIADB_DSN);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig::default();
     let table_name = test_table_name("test_mariadb_transaction_rollback");
     let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
@@ -101,7 +101,7 @@ async fn test_mariadb_concurrent_connections() {
         let handle = tokio::spawn(async move {
             let dsn = parse_dsn(MARIADB_DSN);
             let tls = TlsConfig::default();
-            let now = Utc::now();
+            let now = OffsetDateTime::now_utc();
             let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
             mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, &table_name).await
         });
@@ -126,7 +126,7 @@ async fn test_mariadb_with_different_ranges() {
     }
 
     let dsn = parse_dsn(MARIADB_DSN);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig::default();
     let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
 

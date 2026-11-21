@@ -1,3 +1,7 @@
+## 0.10.3
+
+* Cargo update, including SQLx 0.9.1 ([TCP_NODELAY fix](https://github.com/transact-rs/sqlx/pull/4336#issuecomment-5503876280)).
+
 ## 0.10.1 (2026-09-02)
 
 ### Fixed

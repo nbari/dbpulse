@@ -1,6 +1,7 @@
 use super::{
     HealthCheckResult, ReadBack, classify_cert_probe_error, classify_read_back,
-    record_replication_lag, set_or_retire, validate_identifier, validate_range,
+    record_replication_lag, set_or_retire, utc_from_system_time, validate_identifier,
+    validate_range,
 };
 use crate::{
     metrics::{
@@ -15,14 +16,14 @@ use crate::{
     },
 };
 use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, Utc, prelude::*};
 use dsn::DSN;
 use rand::RngExt;
 use sqlx::{
     AssertSqlSafe, ConnectOptions, Connection, Row,
     postgres::{PgConnectOptions, PgDatabaseError, PgSslMode},
 };
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 /// Test read/write operations on the default table
@@ -32,7 +33,7 @@ use uuid::Uuid;
 /// Returns an error if database connection or operations fail
 pub async fn test_rw(
     dsn: &DSN,
-    now: DateTime<Utc>,
+    now: impl Into<SystemTime>,
     range: u32,
     tls: &TlsConfig,
     cert_cache: &CertCache,
@@ -47,7 +48,7 @@ pub async fn test_rw(
 /// Returns an error if database connection or operations fail
 pub async fn test_rw_with_table(
     dsn: &DSN,
-    now: DateTime<Utc>,
+    now: impl Into<SystemTime>,
     range: u32,
     tls: &TlsConfig,
     cert_cache: &CertCache,
@@ -55,6 +56,7 @@ pub async fn test_rw_with_table(
 ) -> Result<HealthCheckResult> {
     validate_identifier("table name", table_name)?;
     validate_range(range)?;
+    let now = utc_from_system_time(now.into())?;
     ensure_crypto_provider();
     let options = postgres_connect_options(dsn, tls);
     let conn_start = Instant::now();
@@ -134,7 +136,7 @@ fn is_missing_table_error(error: &anyhow::Error) -> bool {
 /// accepts a write, read it back, and prove a transaction rolls back.
 async fn postgres_read_write_cycle(
     conn: &mut sqlx::PgConnection,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
     range: u32,
     table_name: &str,
 ) -> Result<u32> {
@@ -154,7 +156,7 @@ async fn postgres_read_write_cycle(
 /// so it stays visible rather than silent.
 async fn postgres_read_write_cycle_resilient(
     conn: &mut sqlx::PgConnection,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
     range: u32,
     table_name: &str,
 ) -> Result<u32> {
@@ -501,7 +503,7 @@ async fn ensure_postgres_table(conn: &mut sqlx::PgConnection, table_name: &str) 
 
 async fn postgres_insert_and_verify(
     conn: &mut sqlx::PgConnection,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
     range: u32,
     table_name: &str,
 ) -> Result<u32> {
@@ -526,7 +528,7 @@ async fn postgres_insert_and_verify(
     let insert_timer = Instant::now();
     let insert_result = sqlx::query(AssertSqlSafe(insert_sql))
         .bind(id_i32)
-        .bind(now.timestamp())
+        .bind(now.unix_timestamp())
         .bind(uuid)
         .execute(&mut *conn)
         .await?;
@@ -556,7 +558,7 @@ async fn postgres_insert_and_verify(
         RW_ROW_CONTENTION.with_label_values(&["postgres"]).inc();
         return Ok(id);
     };
-    match classify_read_back(now.timestamp(), &uuid.to_string(), t1, &v4.to_string()) {
+    match classify_read_back(now.unix_timestamp(), &uuid.to_string(), t1, &v4.to_string()) {
         ReadBack::Match => {}
         ReadBack::ConcurrentOverwrite => {
             RW_ROW_CONTENTION.with_label_values(&["postgres"]).inc();
@@ -564,7 +566,7 @@ async fn postgres_insert_and_verify(
         ReadBack::Mismatch => {
             return Err(anyhow!(
                 "Records don't match: expected ({}, {}), got ({}, {})",
-                now.timestamp(),
+                now.unix_timestamp(),
                 uuid,
                 t1,
                 v4
@@ -583,10 +585,13 @@ async fn postgres_insert_and_verify(
 /// that are being actively written) if it ever stops rolling back.
 async fn postgres_transaction_rollback_test(
     conn: &mut sqlx::PgConnection,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
     table_name: &str,
 ) -> Result<()> {
-    let rollback_seed = now.timestamp_micros().rem_euclid(i64::from(i32::MAX));
+    let rollback_seed = now
+        .unix_timestamp_nanos()
+        .div_euclid(1_000)
+        .rem_euclid(i128::from(i32::MAX));
     let rollback_test_id =
         i32::try_from(rollback_seed).context("rollback test id out of range for PostgreSQL INT")?;
     let rollback_uuid = Uuid::new_v4();
@@ -673,7 +678,7 @@ async fn update_postgres_table_rows_metric(conn: &mut sqlx::PgConnection, table_
 
 async fn maybe_drop_postgres_table_hourly(
     conn: &mut sqlx::PgConnection,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
     id: u32,
     table_name: &str,
 ) {

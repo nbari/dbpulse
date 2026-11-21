@@ -1,6 +1,5 @@
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use chrono::Utc;
 use dbpulse::queries::{HealthCheckResult, mysql, postgres};
 use dbpulse::tls::{TlsConfig, TlsMode, cache::CertCache};
 use dsn::DSN;
@@ -10,6 +9,7 @@ use std::{
     process::Command,
     sync::atomic::{AtomicBool, Ordering},
 };
+use time::OffsetDateTime;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -42,7 +42,7 @@ pub async fn test_postgres_connection_with_table(
     table_name: &str,
 ) -> anyhow::Result<HealthCheckResult> {
     let dsn = dsn::parse(dsn_str)?;
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig::default();
     let cert_cache = test_cert_cache();
     postgres::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, table_name).await
@@ -57,7 +57,7 @@ pub async fn test_mariadb_connection_with_table(
     table_name: &str,
 ) -> anyhow::Result<HealthCheckResult> {
     let dsn = dsn::parse(dsn_str)?;
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig::default();
     let cert_cache = test_cert_cache();
     mysql::test_rw_with_table(&dsn, now, 100, &tls, &cert_cache, table_name).await
@@ -76,7 +76,7 @@ pub async fn test_postgres_with_tls_and_table(
     table_name: &str,
 ) -> anyhow::Result<HealthCheckResult> {
     let dsn = dsn::parse(dsn_str)?;
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig {
         mode: tls_mode,
         ca: None,
@@ -100,7 +100,7 @@ pub async fn test_mariadb_with_tls_and_table(
     table_name: &str,
 ) -> anyhow::Result<HealthCheckResult> {
     let dsn = dsn::parse(dsn_str)?;
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig {
         mode: tls_mode,
         ca: None,

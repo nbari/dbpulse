@@ -555,7 +555,7 @@ mod tests {
         assert!(result.is_ok());
 
         let buffer = result.unwrap();
-        assert!(!buffer.is_empty());
+        assert_ne!(buffer, [] as [u8; 0]);
 
         // Verify it's valid UTF-8 and contains some expected metric names
         let output = String::from_utf8(buffer).unwrap();
@@ -578,7 +578,7 @@ mod tests {
 
         // Test that registry can gather metrics
         let metrics = REGISTRY.gather();
-        assert!(!metrics.is_empty());
+        assert_ne!(metrics, [] as [prometheus::proto::MetricFamily; 0]);
 
         // Check that our custom metrics are registered
         let metric_names: Vec<String> = metrics.iter().map(|m| m.name().to_string()).collect();

@@ -4,7 +4,6 @@ version = "0.10.2"
 authors = ["Nicolas Embriz <nbari@tequila.io>"]
 description = "command line tool to monitor that database is available for read & write"
 documentation = "https://github.com/nbari/dbpulse/blob/master/README.md"
-homepage = "https://github.com/nbari/dbpulse"
 repository = "https://github.com/nbari/dbpulse"
 readme = "README.md"
 keywords = ["mysql", "monitor", "healthcheck", "database", "metrics"]
@@ -44,7 +43,6 @@ large_stack_arrays = "deny"
 [dependencies]
 anyhow = "1"
 axum = "0.8"
-chrono = "0.4"
 clap = { version = "4.6", features = ["env"]}
 dsn = "1"
 futures = "0.3"
@@ -56,9 +54,10 @@ rand = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.9", features = ["mysql", "postgres", "runtime-tokio", "uuid", "tls-rustls"] }
+time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 tokio = { version ="1", features = ["full"]}
 tokio-rustls = "0.26"
-uuid = { version = "1.26", features = ["v4"] }
+uuid = { version = "1.29", features = ["v4"] }
 webpki-roots = "1.0"
 
 [package.metadata.generate-rpm]

@@ -2,6 +2,23 @@ pub mod mysql;
 pub mod postgres;
 
 use crate::{metrics::REPLICATION_LAG, tls::TlsMetadata};
+use anyhow::{Result, anyhow};
+use std::time::{SystemTime, UNIX_EPOCH};
+use time::OffsetDateTime;
+
+/// Convert the caller's clock reading into UTC calendar fields.
+///
+/// Drivers accept `impl Into<SystemTime>` so any clock type converts for free;
+/// this is the one place that reading becomes the Unix seconds, microseconds
+/// and minute the checks use. A reading outside the range `time` can
+/// represent is an error rather than a panic.
+pub(crate) fn utc_from_system_time(now: SystemTime) -> Result<OffsetDateTime> {
+    match now.duration_since(UNIX_EPOCH) {
+        Ok(after) => OffsetDateTime::UNIX_EPOCH.checked_add(after.try_into()?),
+        Err(before) => OffsetDateTime::UNIX_EPOCH.checked_sub(before.duration().try_into()?),
+    }
+    .ok_or_else(|| anyhow!("clock reading is outside the supported date range"))
+}
 
 /// Classify a certificate-probe failure for `dbpulse_tls_cert_probe_errors_total`.
 ///

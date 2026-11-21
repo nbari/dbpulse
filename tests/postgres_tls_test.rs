@@ -16,13 +16,13 @@
 ///   `POSTGRES_CA_CERT`  - Path to CA certificate (default: `.certs/postgres/ca.crt`)
 mod common;
 
-use chrono::Utc;
 use common::*;
 use dbpulse::queries::postgres;
 use dbpulse::tls::cache::CertCache;
 use dbpulse::tls::{TlsConfig, TlsMode, TlsProbeProtocol, probe_certificate_expiry};
 use std::env;
 use std::path::PathBuf;
+use time::OffsetDateTime;
 
 /// Get `PostgreSQL` DSN with TLS parameters
 fn get_postgres_tls_dsn(ssl_mode: &str) -> String {
@@ -51,7 +51,7 @@ async fn test_tls_disable() {
 
     let dsn_str = get_postgres_tls_dsn("disable");
     let dsn = parse_dsn(&dsn_str);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig {
         mode: TlsMode::Disable,
         ca: None,
@@ -82,7 +82,7 @@ async fn test_tls_require() {
 
     let dsn_str = get_postgres_tls_dsn("require");
     let dsn = parse_dsn(&dsn_str);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig {
         mode: TlsMode::Require,
         ca: None,
@@ -129,7 +129,7 @@ async fn test_tls_verify_ca() {
 
     let dsn_str = get_postgres_tls_dsn("verify-ca");
     let dsn = parse_dsn(&dsn_str);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig {
         mode: TlsMode::VerifyCA,
         ca: ca_cert_path,
@@ -179,7 +179,7 @@ async fn test_tls_verify_full() {
 
     let dsn_str = get_postgres_tls_dsn("verify-full");
     let dsn = parse_dsn(&dsn_str);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig {
         mode: TlsMode::VerifyFull,
         ca: ca_cert_path,
@@ -223,7 +223,7 @@ async fn test_tls_multiple_connections() {
 
     let dsn_str = get_postgres_tls_dsn("require");
     let dsn = parse_dsn(&dsn_str);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig {
         mode: TlsMode::Require,
         ca: None,
@@ -254,7 +254,7 @@ async fn test_tls_with_wrong_ca_fails() {
 
     let dsn_str = get_postgres_tls_dsn("verify-ca");
     let dsn = parse_dsn(&dsn_str);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
 
     // Use a non-existent CA certificate
     let wrong_ca = PathBuf::from("/tmp/nonexistent-ca.crt");
@@ -285,7 +285,7 @@ async fn test_tls_connection_info() {
 
     let dsn_str = get_postgres_tls_dsn("require");
     let dsn = parse_dsn(&dsn_str);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig {
         mode: TlsMode::Require,
         ca: None,
@@ -377,9 +377,15 @@ async fn test_verify_ca_accepts_hostname_mismatch_and_reports_expiry() {
     );
 
     let table_name = test_table_name("test_postgres_tls_verify_ca_mismatch");
-    let result =
-        postgres::test_rw_with_table(&dsn, Utc::now(), 100, &tls, &test_cert_cache(), &table_name)
-            .await;
+    let result = postgres::test_rw_with_table(
+        &dsn,
+        OffsetDateTime::now_utc(),
+        100,
+        &tls,
+        &test_cert_cache(),
+        &table_name,
+    )
+    .await;
 
     assert!(
         result.is_ok(),
@@ -435,9 +441,15 @@ async fn test_verify_full_rejects_hostname_mismatch() {
     );
 
     let table_name = test_table_name("test_postgres_tls_verify_full_mismatch");
-    let result =
-        postgres::test_rw_with_table(&dsn, Utc::now(), 100, &tls, &test_cert_cache(), &table_name)
-            .await;
+    let result = postgres::test_rw_with_table(
+        &dsn,
+        OffsetDateTime::now_utc(),
+        100,
+        &tls,
+        &test_cert_cache(),
+        &table_name,
+    )
+    .await;
 
     assert!(
         result.is_err(),

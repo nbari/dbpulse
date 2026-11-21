@@ -8,13 +8,44 @@ use crate::{
     queries::{HealthCheckResult, mysql, postgres},
     tls::{TlsConfig, cache::CertCache},
 };
+use ::time::{
+    Duration, OffsetDateTime, format_description::StaticFormatDescription,
+    macros::format_description,
+};
 use axum::{Router, http::StatusCode, response::IntoResponse, routing::get};
-use chrono::{Duration, Utc, prelude::*};
 use dsn::DSN;
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use std::{env::var, net::IpAddr, sync::Arc};
 use tokio::{net::TcpListener, sync::mpsc, task, time};
+
+const LOG_TIMESTAMP: StaticFormatDescription =
+    format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
+const PULSE_TIMESTAMP: StaticFormatDescription =
+    format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]");
+
+/// Current UTC time as RFC 3339 with whole seconds and a `Z` suffix.
+///
+/// Formatting only fails for years outside 0..=9999, which a real clock never
+/// reports; an empty stamp is the fallback rather than a panic.
+fn now_rfc3339_secs() -> String {
+    OffsetDateTime::now_utc()
+        .format(LOG_TIMESTAMP)
+        .unwrap_or_default()
+}
+
+/// UTC RFC 3339 stamp for the `time` field of a pulse record: `+00:00` offset
+/// and a 3, 6 or 9 digit fraction only when the instant has one.
+fn format_rfc3339(now: OffsetDateTime) -> String {
+    let fraction = match now.nanosecond() {
+        0 => String::new(),
+        n if n % 1_000_000 == 0 => format!(".{:03}", n / 1_000_000),
+        n if n % 1_000 == 0 => format!(".{:06}", n / 1_000),
+        n => format!(".{n:09}"),
+    };
+    let seconds = now.format(PULSE_TIMESTAMP).unwrap_or_default();
+    format!("{seconds}{fraction}+00:00")
+}
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 struct Pulse {
@@ -99,7 +130,7 @@ pub async fn start(
         "{} {} - {} - Listening on {}, interval: {}",
         env!("CARGO_PKG_NAME"),
         env!("CARGO_PKG_VERSION"),
-        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        now_rfc3339_secs(),
         bind_addr,
         interval
     );
@@ -115,7 +146,7 @@ pub async fn start(
 
     println!(
         "{} - TLS certificate cache TTL: {}s",
-        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        now_rfc3339_secs(),
         cert_cache_ttl_secs
     );
 
@@ -240,8 +271,8 @@ fn check_timeout(every: u16) -> time::Duration {
 #[inline]
 fn remaining_sleep_duration(wait_time: Duration, runtime: Duration) -> time::Duration {
     wait_time
-        .checked_sub(&runtime)
-        .and_then(|remaining| remaining.to_std().ok())
+        .checked_sub(runtime)
+        .and_then(|remaining| std::time::Duration::try_from(remaining).ok())
         .filter(|duration| !duration.is_zero())
         .unwrap_or(MIN_SLEEP)
 }
@@ -265,7 +296,7 @@ fn metric_database(driver: &str) -> Option<&'static str> {
 async fn run_health_check(
     database: &str,
     dsn: &DSN,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
     range: u32,
     tls: &TlsConfig,
     cert_cache: &CertCache,
@@ -350,7 +381,7 @@ fn apply_tls_metrics(
 }
 fn record_success(
     database: &str,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
     pulse: &mut Pulse,
     result: &HealthCheckResult,
     labels: &mut LoopLabels,
@@ -388,7 +419,7 @@ fn record_success(
             .inc();
         LAST_SUCCESS
             .with_label_values(&[database])
-            .set(now.timestamp());
+            .set(now.unix_timestamp());
     }
 
     apply_tls_metrics(database, pulse, result, labels);
@@ -452,9 +483,9 @@ async fn run_iteration(
     labels: &mut LoopLabels,
 ) {
     let mut pulse = Pulse::default();
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let wait_time = Duration::seconds(every.into());
-    pulse.time = now.to_rfc3339();
+    pulse.time = format_rfc3339(now);
     let timer = RUNTIME.start_timer();
 
     let Some(database) = metric_database(dsn.driver.as_str()) else {
@@ -494,8 +525,8 @@ async fn run_iteration(
     }
 
     timer.observe_duration();
-    let runtime = Utc::now().signed_duration_since(now);
-    pulse.runtime_ms = runtime.num_milliseconds();
+    let runtime = OffsetDateTime::now_utc() - now;
+    pulse.runtime_ms = i64::try_from(runtime.whole_milliseconds()).unwrap_or(i64::MAX);
     LAST_RUNTIME_MS
         .with_label_values(&[database])
         .set(pulse.runtime_ms);
@@ -618,7 +649,7 @@ mod tests {
 
         record_success(
             "readonly_json_db",
-            Utc::now(),
+            OffsetDateTime::now_utc(),
             &mut pulse,
             &health_result("PostgreSQL 16.0", true),
             &mut labels,
@@ -649,7 +680,7 @@ mod tests {
 
         record_success(
             "writable_json_db",
-            Utc::now(),
+            OffsetDateTime::now_utc(),
             &mut pulse,
             &health_result("PostgreSQL 16.0", false),
             &mut labels,
@@ -717,7 +748,13 @@ mod tests {
 
         let mut with_uptime = health_result("PostgreSQL 16.0", false);
         with_uptime.uptime_seconds = Some(4_242);
-        record_success(database, Utc::now(), &mut pulse, &with_uptime, &mut labels);
+        record_success(
+            database,
+            OffsetDateTime::now_utc(),
+            &mut pulse,
+            &with_uptime,
+            &mut labels,
+        );
         assert!(
             uptime_metric_exists(database),
             "a reported uptime should be published"
@@ -725,7 +762,13 @@ mod tests {
 
         let without = health_result("PostgreSQL 16.0", false);
         assert!(without.uptime_seconds.is_none());
-        record_success(database, Utc::now(), &mut pulse, &without, &mut labels);
+        record_success(
+            database,
+            OffsetDateTime::now_utc(),
+            &mut pulse,
+            &without,
+            &mut labels,
+        );
         assert!(
             !uptime_metric_exists(database),
             "the series must be retired, not left at its last value"
@@ -742,7 +785,7 @@ mod tests {
 
         record_success(
             database,
-            Utc::now(),
+            OffsetDateTime::now_utc(),
             &mut pulse,
             &health_result("PostgreSQL 16.0", true),
             &mut labels,
@@ -751,7 +794,7 @@ mod tests {
 
         record_success(
             database,
-            Utc::now(),
+            OffsetDateTime::now_utc(),
             &mut pulse,
             &health_result("PostgreSQL 16.0", false),
             &mut labels,
@@ -771,7 +814,7 @@ mod tests {
 
         record_success(
             database,
-            Utc::now(),
+            OffsetDateTime::now_utc(),
             &mut pulse,
             &health_result(version, true),
             &mut labels,

@@ -2,11 +2,11 @@
 
 mod common;
 
-use chrono::Utc;
 use common::*;
 use dbpulse::queries::{mysql, postgres};
 use dbpulse::tls::TlsConfig;
 use dbpulse::tls::cache::CertCache;
+use time::OffsetDateTime;
 
 /// List of metrics that should be populated after running query functions
 /// Note: Metrics like `dbpulse_pulse`, `dbpulse_runtime`, etc. are set by the pulse module,
@@ -58,7 +58,7 @@ async fn test_postgres_all_metrics_present() {
     }
 
     let dsn = parse_dsn(POSTGRES_DSN);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig::default();
     let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
     let table_name = test_table_name("metrics_test_postgres");
@@ -174,7 +174,7 @@ async fn test_mariadb_all_metrics_present() {
     }
 
     let dsn = parse_dsn(MARIADB_DSN);
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let tls = TlsConfig::default();
     let cert_cache = CertCache::new(std::time::Duration::from_mins(5));
     let table_name = test_table_name("metrics_test_mariadb");
@@ -314,7 +314,7 @@ async fn test_postgres_and_mariadb_metric_parity() {
 
     // Test PostgreSQL
     let pg_dsn = parse_dsn(POSTGRES_DSN);
-    let pg_now = Utc::now();
+    let pg_now = OffsetDateTime::now_utc();
     let pg_tls = TlsConfig::default();
     let pg_cert_cache = CertCache::new(std::time::Duration::from_mins(5));
     let pg_table = test_table_name("parity_test_postgres");
@@ -332,7 +332,7 @@ async fn test_postgres_and_mariadb_metric_parity() {
 
     // Test MariaDB
     let my_dsn = parse_dsn(MARIADB_DSN);
-    let my_now = Utc::now();
+    let my_now = OffsetDateTime::now_utc();
     let my_tls = TlsConfig::default();
     let my_cert_cache = CertCache::new(std::time::Duration::from_mins(5));
     let my_table = test_table_name("parity_test_mariadb");
